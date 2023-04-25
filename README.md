@@ -10,7 +10,8 @@
 </pre>
 
 # PyRTP
-Contributing authors: Matthew Thompson - MatThompson@lincoln.ac.uk    
+Contributing authors: Matthew Thompson - MatThompson@lincoln.ac.uk 
+                      Matt Watkins - MWatkins@lincoln.ac.uk   
 <br />
 Date of last edit: 25/04/2023  
 Description: A program to perform RT-TDDFT exclusively in Python.
