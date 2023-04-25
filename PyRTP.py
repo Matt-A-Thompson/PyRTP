@@ -407,16 +407,17 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
 			break
                 
 		P = P_new 
-	return P,E_0,C
+	return P,E_0,C,KS
 
 #DeltaKick - run each propagation step!
-def deltaKick(P,scale,direction,t):
-    t0=3
+def deltaKick(KS,scale,direction,t,r_x,r_y,r_z,CGF_He,CGF_H,dr):
+    t0=1
     w=0.2
     Efield=np.dot(scale*np.exp((-(t-t0)**2)/(2*(w**2))),direction)
-    P_add=np.dot(P,Efield)
-    P_new=P+P_add
-    return P_new
+    D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
+    V_app=-(np.dot(D_x,Efield[0])+np.dot(D_y,Efield[1])+np.dot(D_z,Efield[2]))
+    KS_new=KS+V_app
+    return KS_new
 
 # Propagator - using predictor-corrector regime
 
@@ -593,34 +594,88 @@ def rttddft(nsteps,dt,propagator):
     r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
 
     # Compute the ground state first
-    P,H,C=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,GSiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+    P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,GSiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
     energies=[]
     mu=[]
     t=np.arange(0,nsteps*dt,dt)
 
     
-    
     for i in range(0,nsteps):
         print('--------------------------------------------------------------------\nPropagation timestep: '+str(i+1))
-        P=deltaKick(P,2e-5,[1,0],t[i])
+        KS=deltaKick(KS,2e-5,[1,0,0],t[i],r_x,r_y,r_z,CGF_He,CGF_H,dr)
+        P=GetP(KS,S)
         if i<3 and propagator=='AETRS'or'CAETRS':
             P=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[])
         elif i>2 and propagator=='AETRS'or'CAETRS':
             P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1])
         else:
             P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[])
-        P,H,C=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,GSiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
-        D=2*(C@np.transpose(C))
-        Pmo=(C@P@np.transpose(C))
-        Dmo=(C@D@np.transpose(C))
-        mu_nonstat=2*(Pmo@Dmo)
-        mu_stat=Pmo[0][0]*Dmo[0][0] + Pmo[0][1]*Dmo[0][1] + Pmo[1][0]*Dmo[1][0] + Pmo[1][1]*Dmo[1][1]
-        mu_total=mu_stat+np.sum(mu_nonstat)
+        P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,GSiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+        D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
+        mu_t=np.trace(np.dot(D_tot,P))
+
         energies.append(H)
-        mu.append(mu_total)
-        print('Total dipole moment: '+str(mu_total))
+        mu.append(mu_t)
+        print('Total dipole moment: '+str(mu_t))
     
     return energies,mu
+
+def transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr) :
+
+    D_x = [[0.,0.],[0.,0.]]
+    for i in range(0,len(r_x)) :
+        for j in range(0,len(r_x)) :
+            for k in range(0,len(r_x)) :
+             
+                #Integrate over grid points
+                D_x[0][0] += r_x[i]*CGF_He[i][j][k]**2*dr
+                D_x[0][1] += r_x[i]*CGF_He[i][j][k]*CGF_H[i][j][k]*dr
+                D_x[1][0] += r_x[i]*CGF_H[i][j][k]*CGF_He[i][j][k]*dr
+                D_x[1][1] += r_x[i]*CGF_H[i][j][k]**2*dr                
+
+    D_y = [[0.,0.],[0.,0.]]
+    for i in range(0,len(r_y)) :
+        for j in range(0,len(r_y)) :
+            for k in range(0,len(r_y)) :
+             
+                #Integrate over grid points
+                D_y[0][0] += r_y[i]*CGF_He[i][j][k]**2*dr
+                D_y[0][1] += r_y[i]*CGF_He[i][j][k]*CGF_H[i][j][k]*dr
+                D_y[1][0] += r_y[i]*CGF_H[i][j][k]*CGF_He[i][j][k]*dr
+                D_y[1][1] += r_y[i]*CGF_H[i][j][k]**2*dr   
+
+    D_z = [[0.,0.],[0.,0.]]
+    for i in range(0,len(r_z)) :
+        for j in range(0,len(r_z)) :
+            for k in range(0,len(r_z)) :
+             
+                #Integrate over grid points
+                D_z[0][0] += r_z[i]*CGF_He[i][j][k]**2*dr
+                D_z[0][1] += r_z[i]*CGF_He[i][j][k]*CGF_H[i][j][k]*dr
+                D_z[1][0] += r_z[i]*CGF_H[i][j][k]*CGF_He[i][j][k]*dr
+                D_z[1][1] += r_z[i]*CGF_H[i][j][k]**2*dr   
+
+    D_tot=D_x+D_y+D_z
+
+    return D_x,D_y,D_z,D_tot
+
+def GetP(KS,S):
+    S=Matrix(S)
+    U,s = S.diagonalize()
+    s = s**(-0.5)
+    X = np.matmul(np.array(U,dtype='float64'),np.array(s,dtype='float64'))
+    X_dag = np.matrix.transpose(np.array(X,dtype='float64'))
+    KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
+    C_temp, e = KS_temp.diagonalize()
+    C = np.matmul(X,C_temp)
+    P_new=np.array([[0., 0.],[0., 0.]])
+    for u in range(0,2) :
+        for v in range(0,2) :
+            for p in range(0,1) :
+                P_new[u][v] += C[u][p]*C[v][p]
+            P_new[u][v] *=2
+
+    return P_new
 
 #%%
 energies,mu=rttddft(10,0.5,'EM')
