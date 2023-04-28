@@ -6,6 +6,7 @@ import scipy
 import matplotlib.pyplot as plt
 from pyscf import gto, dft, lib
 from sympy import Matrix
+from scipy.interpolate import lagrange
 
 #%%
 # FunctionCalls - all the functions used in the DFT calculation will be stored here
@@ -438,7 +439,7 @@ def propagator(select,H1,H2,dt):
 
     return U
 
-def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev):
+def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew):
     match select:
         case 'CN':
             # predictor step first
@@ -516,7 +517,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
         case 'AETRS':
-            Hdt=2*H-Hprev
+            Hdt=LagrangeExtrapolate(t,energies,tnew)
             U=np.real(propagator(select,H,Hdt,dt))
             C_new=np.dot(U,C)
             P_new=np.array([[0., 0.],[0., 0.]])
@@ -526,7 +527,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
         case 'CAETRS':    
-            Hdt=2*H-Hprev
+            Hdt=LagrangeExtrapolate(t,energies,tnew)
             U=np.real(propagator(select,H,Hdt,dt))
             C_p=np.dot(U,C)
             P_p=np.array([[0., 0.],[0., 0.]])
@@ -562,8 +563,8 @@ def rttddft(nsteps,dt,propagator):
     '/**        **     /**   //**    /**    /**      \n'+
     '//        //      //     //     //     //       \n'+
     '-------------------------------------------------------\n')
-    print('Author: Matthew Thompson - MatThompson@lincoln.ac.uk\n'+
-    'Date of last edit: 11/04/2023\n'+
+    print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\n'+
+    'Date of last edit: 28/04/2023\n'+
     'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
     '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
     '\t     selected for benchmarking and testing. Comments on \n'+
@@ -605,11 +606,11 @@ def rttddft(nsteps,dt,propagator):
         KS=deltaKick(KS,2e-5,[1,0,0],t[i],r_x,r_y,r_z,CGF_He,CGF_H,dr)
         P=GetP(KS,S)
         if i<3 and propagator=='AETRS'or'CAETRS':
-            P=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[])
+            P=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i])
         elif i>2 and propagator=='AETRS'or'CAETRS':
-            P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1])
+            P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i])
         else:
-            P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[])
+            P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i+1])
         P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,GSiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
         D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
         mu_t=np.trace(np.dot(D_tot,P))
@@ -669,16 +670,22 @@ def GetP(KS,S):
     C_temp, e = KS_temp.diagonalize()
     C = np.matmul(X,C_temp)
     P_new=np.array([[0., 0.],[0., 0.]])
-    for u in range(0,2) :
-        for v in range(0,2) :
+    for u in range(0,2):
+        for v in range(0,2):
             for p in range(0,1) :
                 P_new[u][v] += C[u][p]*C[v][p]
             P_new[u][v] *=2
 
     return P_new
 
+def LagrangeExtrapolate(t,H,tnew):
+    f=lagrange(t,H)
+    i=f.index(tnew)
+
+    return f[i]
+
 #%%
-energies,mu=rttddft(10,0.5,'EM')
+energies,mu=rttddft(10,0.5,'AETRS')
 # %%
 plt.plot(np.arange(0,10*0.5,0.5),mu)
 # %%
