@@ -561,8 +561,8 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
         case 'CFM4':
-            Ht1=LagrangeExtrapolate(t,energies,(tnew)+((1/2)-(np.sqrt(3)/6)))
-            Ht2=LagrangeExtrapolate(t,energies,(tnew)+((1/2)+(np.sqrt(3)/6)))
+            Ht1=LagrangeExtrapolate(t,energies,(t[i-1])+((1/2)-(np.sqrt(3)/6)))
+            Ht2=LagrangeExtrapolate(t,energies,(t[i-1])+((1/2)+(np.sqrt(3)/6)))
             U=np.real(propagator(select,Ht1,Ht2,dt))
             C_new=np.dot(U,C)
             P_new=np.array([[0., 0.],[0., 0.]])
