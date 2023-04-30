@@ -707,6 +707,14 @@ def LagrangeExtrapolate(t,H,tnew):
 
     return f(tnew)
 
+def pop_analysis(P,S) :
+    PS = np.matmul(P,S)
+    pop_total = np.trace(PS)
+    pop_He = PS[0,0]
+    pop_H = PS[1,1]
+    
+    return pop_total, pop_He, pop_H
+
 #%%
 energies,mu=rttddft(10,0.1,'EM')
 # %%
