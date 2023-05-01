@@ -92,7 +92,7 @@ def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I) :
 
     return n_c_r
 
-def plot_ongrid(n,plot_type,x,ymin,ymax,zmin,zmax) :
+def plot_ongrid(n,plot_type,x,ymin,ymax,zmin,zmax,L,N_i) :
     step = L/N_i
     ext = [-L/2.+zmin*step-step/2.,-L/2.+zmax*step-step/2.,-L/2.+ymin*step-step/2.,-L/2.+ymax*step-step/2.]
     if plot_type == 'image' :
