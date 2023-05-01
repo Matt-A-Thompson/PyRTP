@@ -29,17 +29,13 @@ def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,alpha) :
     #create a matrix of grid points for each of the three GTOs, initialised to zero.
     GTO_p = np.zeros(3*N).reshape(3,N_i,N_i,N_i)
 
-    #Select the correct position and exponent for the chosen nuclei.
-	#A switch statement may work better here, as of Python 3.10, but if ensures backwards compatibility
 
-	#### Section requires change if change in molecule
     if nuc == 'He' :
         r_n = R_I[0]
         alpha_n = alpha[0]  
     if nuc == 'H' :
         r_n = R_I[1]
         alpha_n = alpha[1]
-    ####
         
     #Loop through GTOs and grid points, calculate the GTO value and assign to GTO_p.
     for gto in range(0,3) :
@@ -255,10 +251,6 @@ def calculate_Ion_interaction(Z_I,R_I) :
 
     return E_II
 
-# DFTFunction - runs the function call to perform DFT
-# Eventually I would like to get this into a state where this is completely in the backend.
-# Would require A LOT of arguments in function
-# P is NECESSARY to be in the function call
 def dftSetup(R_I,alpha,Coef,L,N_i,Z_I):
     r_x,r_y,r_z,N,dr=GridCreate(L,N_i)
     GTOs_He = construct_GTOs('He',N,N_i,r_x,r_y,r_z,R_I,alpha)
@@ -299,79 +291,34 @@ def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta
     return E_0
 
 def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II):
-    
-	#r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
 
 	P = P_init
-
 	n_el_r, n_el_r_tot  = calculate_realspace_density(CGF_He,CGF_H,N,N_i,P,dr)
 	n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
 	n_r = n_el_r + n_c_r
-    
-
-	#G_u = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
-	#G_v = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
-	#G_w = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
-
-	# THIS SECTION IS FOR CHECKING THE RECIPROCAL SPACE
-	#PW_He_G = np.fft.fftshift(np.fft.fftn(CGF_He)) #PW representation for He in reciprocal space, G
-	#PW_H_G = np.fft.fftshift(np.fft.fftn(CGF_H)) #PW representation for H in reciprocal space, G
-
-	#The plane wave basis functions are shifted after transfromation so that the frequency domain is [-pi,pi], 
-	# matching the G vectors (rather than [0,2pi] which is the unshifted default).
-
-	#Eq. 4
-	#PW_He_r = np.fft.ifftn(PW_He_G) #PW representation for He in real space, r
-	#PW_H_r = np.fft.ifftn(PW_H_G) #PW representation for H in real space, r
-
-	#no shifting is required for the inverse transform
-
-	#plt.plot(CGF_He[0:N_i][int(N_i/2.)][int(N_i/2.)])
-	#plt.plot(np.real(PW_He_r)[0:N_i][int(N_i/2.)][int(N_i/2.)])
-
-	#S = calculate_overlap(N_i,dr,CGF_He,CGF_H)
-
-	#delta_T = calculate_kinetic_derivative(N,N_i,G_u,G_v,G_w,PW_He_G,PW_H_G,L)
 	T = energy_calculation(delta_T,P)
-
 	n_G = np.fft.fftn(n_r)
 	V_G, E_hart_G = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L)
 	V_r = np.fft.ifftn(V_G)
 	V_hart = grid_integration(V_r,dr,CGF_He,CGF_H)
 	E_hart_r = calculate_hartree_real(N_i,V_r,n_r,dr)
-
-
 	V_XC_r = calculate_XC_potential(N,N_i,n_el_r)
 	V_XC = grid_integration(V_XC_r,dr,CGF_He,CGF_H)
 	E_XC = calculate_XC_energy(N_i,n_el_r,dr)
-
-	
-
 	V_SR_r = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I)
-
 	V_SR = grid_integration(V_SR_r,dr,CGF_He,CGF_H)
 	E_SR = energy_calculation(V_SR,P)
-
-	#E_self = calculate_self_energy(Z_I)
-
-	#E_II = calculate_Ion_interaction(Z_I,R_I)
-
 	KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
 	KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
-
 	S=Matrix(S)
 	U,s = S.diagonalize()
-
 	s = s**(-0.5)
-
 	X = np.matmul(np.array(U,dtype='float64'),np.array(s,dtype='float64'))
 	X_dag = np.matrix.transpose(np.array(X,dtype='float64'))
-
-
+        
 	err = 1.0e-6 #The error margin by which convergence of the P matrix is measured
 
 	P = P_init #reset P to atomic guess.
-        
 	for I in range(0,iterations):
         #density
 		n_el_r, n_el_r_tot=calculate_realspace_density(CGF_He,CGF_H,N,N_i,P,dr)
@@ -421,7 +368,6 @@ def deltaKick(KS,scale,direction,t,r_x,r_y,r_z,CGF_He,CGF_H,dr):
     return KS_new
 
 # Propagator - using predictor-corrector regime
-
 def propagator(select,H1,H2,dt):
     match select:
         case 'CN':
@@ -576,7 +522,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
     
     return P_new
 
-def rttddft(nsteps,dt,propagator):
+def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init):
     # Ground state stuff
     print(' *******           *******   ********** *******\n'+ 
     '/**////**  **   **/**////** /////**/// /**////**\n'+
@@ -602,45 +548,36 @@ def rttddft(nsteps,dt,propagator):
     '--------------------------------------------------------------------\n')
 
     print('Ground state calculations:\n')
-    # Simulation parameters
-    GSiterations=20
-
-    # Molecule parameters
-    Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
-    Z_I = [2.,1.]
-    P_init=np.array([[1.333218,0.],[0.,0.666609]])
-    L=10.
-    N_i=60
-    R_I = [np.array([0.,0.,0.]), np.array([0.,0.,1.4632])] #R_I[0] for He, R_I[1] for H.
-    alpha = [[0.3136497915, 1.158922999, 6.362421394],[0.1688554040, 0.6239137298, 3.425250914]] #alpha[0] for He, alpha[1] for H
-    Coef = [0.4446345422, 0.5353281423, 0.1543289673] #Coefficients are the same for both He and H
-
     # Performing calculation of all constant variables to remove the need to repeat it multiple times.
     r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
 
     # Compute the ground state first
-    P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,GSiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+    P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
     energies=[]
     mu=[]
     t=np.arange(0,nsteps*dt,dt)
 
-    
     for i in range(0,nsteps):
         print('--------------------------------------------------------------------\nPropagation timestep: '+str(i+1))
+        #Applying perturbation
         KS=deltaKick(KS,2e-5,[1,0,0],t[i],r_x,r_y,r_z,CGF_He,CGF_H,dr)
+        #Getting perterbed density matrix
         P=GetP(KS,S)
+        # Propagating
         if i<3 and propagator=='AETRS'or'CAETRS'or'CFM4':
             P=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
         elif i>2 and propagator=='AETRS'or'CAETRS'or'CFM4':
             P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
         else:
             P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,GSiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+        # Converging on accurate KS and P
+        P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+        # Information Collection
         D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
         mu_t=np.trace(np.dot(D_tot,P))
-
         energies.append(H)
         mu.append(mu_t)
+
         print('Total dipole moment: '+str(mu_t))
     
     return energies,mu
@@ -716,7 +653,22 @@ def pop_analysis(P,S) :
     return pop_total, pop_He, pop_H
 
 #%%
-energies,mu=rttddft(10,0.1,'EM')
+# DFT parameters
+SCFiterations=20
+
+#Grid parameters
+L=10.
+N_i=60
+
+# Molecule parameters
+alpha = [[0.3136497915, 1.158922999, 6.362421394],[0.1688554040, 0.6239137298, 3.425250914]] #alpha[0] for He, alpha[1] for H
+Coef = [0.4446345422, 0.5353281423, 0.1543289673] #Coefficients are the same for both He and H
+R_I = [np.array([0.,0.,0.]), np.array([0.,0.,1.4632])] #R_I[0] for He, R_I[1] for H.
+Z_I = [2.,1.]
+Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
+P_init=np.array([[1.333218,0.],[0.,0.666609]])
+
+energies,mu=rttddft(10,0.1,'EM',SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init)
 # %%
 plt.plot(np.arange(0,10*0.1,0.1),energies)
 # %%
