@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from pyscf import gto, dft, lib
 from sympy import Matrix
 from scipy.interpolate import lagrange
+import time
 
 #%%
 # FunctionCalls - all the functions used in the DFT calculation will be stored here
@@ -355,7 +356,7 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
 			break
                 
 		P = P_new 
-	return P,E_0,C,KS
+	return P,np.real(E_0),C,KS
 
 #DeltaKick - run each propagation step!
 def deltaKick(KS,scale,direction,t,r_x,r_y,r_z,CGF_He,CGF_H,dr):
@@ -392,11 +393,14 @@ def propagator(select,H1,H2,dt):
 def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i):
     match select:
         case 'CN':
+            st=time.time()
             # predictor step first
             if i==0:
                 H_p=H
+            elif i>0 and i<6:
+                H_p=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2)) 
             else:
-                H_p=LagrangeExtrapolate(t,H,t[i-1]+(1/2))    
+                H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2))   
             U=np.real(propagator(select,H_p,[],dt))
             C_p=np.dot(U,C)
             # update
@@ -417,12 +421,16 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
+            et=time.time()
         case 'EM':
+            st=time.time()
             # predictor step first
             if i==0:
                 H_p=H
+            elif i>0 and i<6:
+                H_p=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2)) 
             else:
-                H_p=LagrangeExtrapolate(t,H,t[i-1]+(1/2))  
+                H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2))    
             U=np.real(propagator(select,H_p,[],dt))
             C_p=np.dot(U,C)
             # update
@@ -442,11 +450,15 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
+            et=time.time()
         case 'ETRS':
+            st=time.time()
             if i==0:
                 H_p=H
+            elif i>0 and i<6:
+                H_p=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2)) 
             else:
-                H_p=LagrangeExtrapolate(t,H,t[i-1]+(1/2))  
+                H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2))     
             U=np.real(propagator('EM',H_p,[],dt))
             C_p=np.dot(U,C)
             # update
@@ -475,8 +487,13 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
+            et=time.time()
         case 'AETRS':
-            Hdt=LagrangeExtrapolate(t,energies,tnew)
+            st=time.time()
+            if i<6:
+                H_p=LagrangeExtrapolate(t[0:i],energies[0:i],tnew) 
+            else:
+                H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew)   
             U=np.real(propagator(select,H,Hdt,dt))
             C_new=np.dot(U,C)
             P_new=np.array([[0., 0.],[0., 0.]])
@@ -485,8 +502,13 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
-        case 'CAETRS':    
-            Hdt=LagrangeExtrapolate(t,energies,tnew)
+            et=time.time()
+        case 'CAETRS':
+            st=time.time()    
+            if i<6:
+                H_p=LagrangeExtrapolate(t[0:i],energies[0:i],tnew) 
+            else:
+                H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew) 
             U=np.real(propagator(select,H,Hdt,dt))
             C_p=np.dot(U,C)
             P_p=np.array([[0., 0.],[0., 0.]])
@@ -506,9 +528,16 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
+            et=time.time()
         case 'CFM4':
-            Ht1=LagrangeExtrapolate(t,energies,(t[i-1])+((1/2)-(np.sqrt(3)/6)))
-            Ht2=LagrangeExtrapolate(t,energies,(t[i-1])+((1/2)+(np.sqrt(3)/6)))
+            st=time.time()
+            if i<6:
+                Ht1=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)-(np.sqrt(3)/6)))
+                Ht2=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)+(np.sqrt(3)/6))) 
+            else:
+                Ht1=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],(t[i-1])+((1/2)-(np.sqrt(3)/6)))
+                Ht2=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],(t[i-1])+((1/2)+(np.sqrt(3)/6))) 
+            
             U=np.real(propagator(select,Ht1,Ht2,dt))
             C_new=np.dot(U,C)
             P_new=np.array([[0., 0.],[0., 0.]])
@@ -517,10 +546,11 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
+            et=time.time()
         case _:
             raise TypeError("Invalid propagator")
-    
-    return P_new
+    run=et-st
+    return P_new,run
 
 def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init):
     # Ground state stuff
@@ -555,6 +585,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
     energies=[]
     mu=[]
+    propagationtimes=[]
     t=np.arange(0,nsteps*dt,dt)
 
     for i in range(0,nsteps):
@@ -564,12 +595,21 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
         #Getting perterbed density matrix
         P=GetP(KS,S)
         # Propagating
-        if i<3 and propagator=='AETRS'or'CAETRS'or'CFM4':
-            P=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        elif i>2 and propagator=='AETRS'or'CAETRS'or'CFM4':
-            P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+        if i<3 and propagator==('AETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        elif i<3 and propagator==('CAETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        elif i<3 and propagator==('CFM4'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        elif i>2 and propagator==('AETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+        elif i>2 and propagator==('CAETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+        elif i>2 and propagator==('CFM4'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
         else:
-            P=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        print('Propagation time: '+str(proptime))
         # Converging on accurate KS and P
         P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
         # Information Collection
@@ -577,10 +617,11 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
         mu_t=np.trace(np.dot(D_tot,P))
         energies.append(H)
         mu.append(mu_t)
-
-        print('Total dipole moment: '+str(mu_t))
+        propagationtimes.append(proptime)
+        
+        #print('Total dipole moment: '+str(mu_t))
     
-    return energies,mu
+    return energies,mu,propagationtimes
 
 def transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr) :
 
@@ -641,8 +682,8 @@ def GetP(KS,S):
 
 def LagrangeExtrapolate(t,H,tnew):
     f=lagrange(t,H)
-
-    return f(tnew)
+    print(f(tnew))
+    return np.real(f(tnew))
 
 def pop_analysis(P,S) :
     PS = np.matmul(P,S)
@@ -654,7 +695,7 @@ def pop_analysis(P,S) :
 
 #%%
 # DFT parameters
-SCFiterations=20
+SCFiterations=1
 
 #Grid parameters
 L=10.
@@ -668,9 +709,10 @@ Z_I = [2.,1.]
 Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
 P_init=np.array([[1.333218,0.],[0.,0.666609]])
 
-energies,mu=rttddft(10,0.1,'EM',SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init)
+energies,mu,timings=rttddft(100,0.1,'CN',SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init)
 # %%
-plt.plot(np.arange(0,10*0.1,0.1),energies)
+plt.plot(timings)
+EMtimings=timings
 # %%
 mu=np.array(mu)
 c=299792458
