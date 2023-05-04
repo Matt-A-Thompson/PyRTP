@@ -384,7 +384,7 @@ def propagator(select,H1,H2,dt):
         case 'CFM4':
             a1=(3-2*np.sqrt(3))/12
             a2=(3+2*np.sqrt(3))/12
-            U=np.cross(np.exp(-1j*dt*a1*H1-1j*dt*a2*H2),np.exp(-1j*dt*a2*H1-1j*dt*a1*H2))
+            U=np.dot(np.exp(-1j*dt*a1*H1-1j*dt*a2*H2),np.exp(-1j*dt*a2*H1-1j*dt*a1*H2))
         case _:
             raise TypeError("Invalid propagator")
 
@@ -397,7 +397,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             # predictor step first
             if i==0:
                 H_p=H
-            elif i>0 and i<6:
+            elif i>0 and i<5:
                 H_p=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2)) 
             else:
                 H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2))   
@@ -427,7 +427,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             # predictor step first
             if i==0:
                 H_p=H
-            elif i>0 and i<6:
+            elif i>0 and i<5:
                 H_p=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2)) 
             else:
                 H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2))    
@@ -455,7 +455,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             st=time.time()
             if i==0:
                 H_p=H
-            elif i>0 and i<6:
+            elif i>0 and i<5:
                 H_p=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2)) 
             else:
                 H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2))     
@@ -490,10 +490,10 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             et=time.time()
         case 'AETRS':
             st=time.time()
-            if i<6:
-                H_p=LagrangeExtrapolate(t[0:i],energies[0:i],tnew) 
+            if i<5:
+                Hdt=LagrangeExtrapolate(t[0:i],energies[0:i],tnew) 
             else:
-                H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew)   
+                Hdt=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew)   
             U=np.real(propagator(select,H,Hdt,dt))
             C_new=np.dot(U,C)
             P_new=np.array([[0., 0.],[0., 0.]])
@@ -505,10 +505,10 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             et=time.time()
         case 'CAETRS':
             st=time.time()    
-            if i<6:
-                H_p=LagrangeExtrapolate(t[0:i],energies[0:i],tnew) 
+            if i<5:
+                Hdt=LagrangeExtrapolate(t[0:i],energies[0:i],tnew) 
             else:
-                H_p=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew) 
+                Hdt=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew) 
             U=np.real(propagator(select,H,Hdt,dt))
             C_p=np.dot(U,C)
             P_p=np.array([[0., 0.],[0., 0.]])
@@ -531,7 +531,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             et=time.time()
         case 'CFM4':
             st=time.time()
-            if i<6:
+            if i<5:
                 Ht1=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)-(np.sqrt(3)/6)))
                 Ht2=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)+(np.sqrt(3)/6))) 
             else:
@@ -586,6 +586,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     energies=[]
     mu=[]
     propagationtimes=[]
+    SE=[]
     t=np.arange(0,nsteps*dt,dt)
 
     for i in range(0,nsteps):
@@ -595,17 +596,17 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
         #Getting perterbed density matrix
         P=GetP(KS,S)
         # Propagating
-        if i<3 and propagator==('AETRS'):
+        if i<2 and propagator==('AETRS'):
             P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        elif i<3 and propagator==('CAETRS'):
+        elif i<2 and propagator==('CAETRS'):
             P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        elif i<3 and propagator==('CFM4'):
+        elif i<2 and propagator==('CFM4'):
             P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        elif i>2 and propagator==('AETRS'):
+        elif i>1 and propagator==('AETRS'):
             P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
-        elif i>2 and propagator==('CAETRS'):
+        elif i>1 and propagator==('CAETRS'):
             P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
-        elif i>2 and propagator==('CFM4'):
+        elif i>1 and propagator==('CFM4'):
             P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
         else:
             P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
@@ -616,12 +617,13 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
         D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
         mu_t=np.trace(np.dot(D_tot,P))
         energies.append(H)
+        SE.append(ShannonEntropy(P))
         mu.append(mu_t)
         propagationtimes.append(proptime)
         
         #print('Total dipole moment: '+str(mu_t))
     
-    return energies,mu,propagationtimes
+    return energies,mu,propagationtimes,SE
 
 def transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr) :
 
@@ -693,6 +695,14 @@ def pop_analysis(P,S) :
     
     return pop_total, pop_He, pop_H
 
+def ShannonEntropy(P):
+    P_eigvals=np.linalg.eigvals(P)
+    P_eigvals_corrected=[x for x in P_eigvals if x>0.00001]
+    P_eigvecbasis=np.diag(P_eigvals_corrected)
+    SE=np.trace(np.dot(P_eigvecbasis,np.log(P_eigvecbasis)))
+
+    return SE
+
 #%%
 # DFT parameters
 SCFiterations=1
@@ -709,11 +719,25 @@ Z_I = [2.,1.]
 Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
 P_init=np.array([[1.333218,0.],[0.,0.666609]])
 
-energies,mu,timings=rttddft(100,0.1,'CN',SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init)
+energies,mu,timings=rttddft(102,0.1,'CFM4',SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init)
 # %%
 plt.plot(timings)
-EMtimings=timings
+CFM4timings=timings[2:102]
+#%%
+plt.plot(CFM4timings)
+
+plt.xlabel('Timestep')
+plt.ylabel('Runtime, $s$')
+plt.title('A plot showing the runtimes of the CFM4 propagator in PyRTP')
+plt.legend(['CFM4'])
 # %%
+plt.plot(np.log(CNtimings))
+plt.plot(np.log(EMtimings))
+plt.plot(np.log(ETRStimings))
+plt.plot(np.log(AETRStimings))
+plt.plot(np.log(CAETRStimings))
+
+#%%
 mu=np.array(mu)
 c=299792458
 h=6.62607015e-34
@@ -726,6 +750,6 @@ plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
 #plt.xlim([0, 5e-7])
-
-
+#%%
+np.save('CFM4run.npy',CFM4timings)
 # %%
