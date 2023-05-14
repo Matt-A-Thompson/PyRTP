@@ -1,6 +1,7 @@
 #%%
 #Package imports
 import numpy as np
+from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
 import math
 import scipy
 import matplotlib.pyplot as plt
@@ -8,9 +9,16 @@ from pyscf import gto, dft, lib
 from sympy import Matrix
 from scipy.interpolate import lagrange
 import time
+import os
+# the number of threads can be specified by uncommenting one of the following functions,
+# run 'np.show_config()' to determine which to use.
+#os.environ['OMP_NUM_THREADS']='8'
+#os.environ['OPENBLAS_NUM_THREADS']='8'
+#os.environ['MPI_NUM_THREADS']='8'
+#os.environ['MKL_NUM_THREADS']='8'
 
 #%%
-# FunctionCalls - all the functions used in the DFT calculation will be stored here
+# FunctionCalls
 def GridCreate(L,N_i):
 	
 	N = N_i**3
@@ -30,7 +38,7 @@ def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,alpha) :
     #create a matrix of grid points for each of the three GTOs, initialised to zero.
     GTO_p = np.zeros(3*N).reshape(3,N_i,N_i,N_i)
 
-
+    # Currently only working for HeH+, however this would be simple to change for other molecules
     if nuc == 'He' :
         r_n = R_I[0]
         alpha_n = alpha[0]  
@@ -88,18 +96,6 @@ def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I) :
                     n_c_r[i][j][k] += -Z_I[n]/(R_pp**3)*np.pi**(-3/2)*np.exp(-((r-R_I[n])/R_pp).dot((r-R_I[n])/R_pp))
 
     return n_c_r
-
-def plot_ongrid(n,plot_type,x,ymin,ymax,zmin,zmax,L,N_i) :
-    step = L/N_i
-    ext = [-L/2.+zmin*step-step/2.,-L/2.+zmax*step-step/2.,-L/2.+ymin*step-step/2.,-L/2.+ymax*step-step/2.]
-    if plot_type == 'image' :
-        plt.imshow(n[x,ymin:ymax,zmin:zmax],origin='lower',extent=ext) 
-        plt.colorbar()
-    if plot_type == 'contour' :
-        plt.contour(n[x,ymin:ymax,zmin:zmax],levels=10,origin='lower',extent=ext)
-        plt.colorbar()
-    plt.xlabel("r (a.u.)")
-    plt.ylabel("r (a.u.)")
     
 def grid_integration(V_r,dr,CGF_He,CGF_H) :
 
@@ -165,7 +161,7 @@ def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L) :
 
     nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
     Vg = np.complex128(np.zeros(N).reshape(N_i,N_i,N_i))
-    E_hart_G = 0. ## Hartree energy in reciprocal space, Eq. ??
+    E_hart_G = 0. ## Hartree energy in reciprocal space
     
     for i in range(0,N_i) :
         for j in range(0,N_i) :
@@ -176,7 +172,7 @@ def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L) :
 
                 if np.dot(G_vec,G_vec) < 0.01 :  continue #can't divide by zero
 
-                Vg[i][j][k] = 4*np.pi*nG[i][j][k]/np.dot(G_vec,G_vec) #Eq. ??
+                Vg[i][j][k] = 4*np.pi*nG[i][j][k]/np.dot(G_vec,G_vec)
                 E_hart_G += np.conjugate(nG[i][j][k])*Vg[i][j][k] 
                 
     E_hart_G *= L**3/N**2*0.5
@@ -321,7 +317,6 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
 
 	P = P_init #reset P to atomic guess.
 	for I in range(0,iterations):
-        #density
 		n_el_r, n_el_r_tot=calculate_realspace_density(CGF_He,CGF_H,N,N_i,P,dr)
 		n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
 		n_r = n_el_r + n_c_r
@@ -358,8 +353,9 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
 		P = P_new 
 	return P,np.real(E_0),C,KS
 
-#DeltaKick - run each propagation step!
-def deltaKick(KS,scale,direction,t,r_x,r_y,r_z,CGF_He,CGF_H,dr):
+# GaussianKick - provides energy to the system in the form of an electric pulse
+# with a Gaussian envelop (run each propagation step!)
+def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,CGF_He,CGF_H,dr):
     t0=1
     w=0.2
     Efield=np.dot(scale*np.exp((-(t-t0)**2)/(2*(w**2))),direction)
@@ -368,8 +364,8 @@ def deltaKick(KS,scale,direction,t,r_x,r_y,r_z,CGF_He,CGF_H,dr):
     KS_new=KS+V_app
     return KS_new
 
-# Propagator - using predictor-corrector regime
-def propagator(select,H1,H2,dt):
+# Propagator - using predictor-corrector regime (if applicable)
+def propagator(select,H1,H2,dt): #propagator functions
     match select:
         case 'CN':
             U=(1-(1j*(dt/2)*H1))/(1+(1j*(dt/2)*H1))
@@ -552,79 +548,6 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
     run=et-st
     return P_new,run
 
-def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init):
-    # Ground state stuff
-    print(' *******           *******   ********** *******\n'+ 
-    '/**////**  **   **/**////** /////**/// /**////**\n'+
-    '/**   /** //** ** /**   /**     /**    /**   /**\n'+
-    '/*******   //***  /*******      /**    /******* \n'+
-    '/**////     /**   /**///**      /**    /**////  \n'+
-    '/**         **    /**  //**     /**    /**      \n'+
-    '/**        **     /**   //**    /**    /**      \n'+
-    '//        //      //     //     //     //       \n'+
-    '-------------------------------------------------------\n')
-    print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\n'+
-    'Date of last edit: 28/04/2023\n'+
-    'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
-    '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
-    '\t     selected for benchmarking and testing. Comments on \n'+
-    '\t     the approaches used are in progress.\n'+
-    '\n'+'System requirements:\n'+
-    '- Python >= 3.10\n'+
-    '- Numpy >= 1.13\n'+
-    '- Sympy >=1.7.1\n'+
-    '- Scipy >= 0.19\n'+
-    '- PySCF >=2.0a, requires either Unix-based system or WSL\n'+
-    '--------------------------------------------------------------------\n')
-
-    print('Ground state calculations:\n')
-    # Performing calculation of all constant variables to remove the need to repeat it multiple times.
-    r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
-
-    # Compute the ground state first
-    P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
-    energies=[]
-    mu=[]
-    propagationtimes=[]
-    SE=[]
-    t=np.arange(0,nsteps*dt,dt)
-
-    for i in range(0,nsteps):
-        print('--------------------------------------------------------------------\nPropagation timestep: '+str(i+1))
-        #Applying perturbation
-        KS=deltaKick(KS,2e-5,[1,0,0],t[i],r_x,r_y,r_z,CGF_He,CGF_H,dr)
-        #Getting perterbed density matrix
-        P=GetP(KS,S)
-        # Propagating
-        if i<2 and propagator==('AETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        elif i<2 and propagator==('CAETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        elif i<2 and propagator==('CFM4'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        elif i>1 and propagator==('AETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
-        elif i>1 and propagator==('CAETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
-        elif i>1 and propagator==('CFM4'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
-        else:
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
-        print('Propagation time: '+str(proptime))
-        # Converging on accurate KS and P
-        P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
-        # Information Collection
-        D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
-        mu_t=np.trace(np.dot(D_tot,P))
-        energies.append(H)
-        SE.append(ShannonEntropy(P))
-        mu.append(mu_t)
-        propagationtimes.append(proptime)
-        
-        #print('Total dipole moment: '+str(mu_t))
-    
-    return energies,mu,propagationtimes,SE
-
 def transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr) :
 
     D_x = [[0.,0.],[0.,0.]]
@@ -684,7 +607,6 @@ def GetP(KS,S):
 
 def LagrangeExtrapolate(t,H,tnew):
     f=lagrange(t,H)
-    print(f(tnew))
     return np.real(f(tnew))
 
 def pop_analysis(P,S) :
@@ -692,7 +614,6 @@ def pop_analysis(P,S) :
     pop_total = np.trace(PS)
     pop_He = PS[0,0]
     pop_H = PS[1,1]
-    
     return pop_total, pop_He, pop_H
 
 def ShannonEntropy(P):
@@ -703,9 +624,114 @@ def ShannonEntropy(P):
 
     return SE
 
+def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init,kickstrength,kickdirection,projectname):
+    # Ground state stuff
+    print(' *******           *******   ********** *******\n'+ 
+    '/**////**  **   **/**////** /////**/// /**////**\n'+
+    '/**   /** //** ** /**   /**     /**    /**   /**\n'+
+    '/*******   //***  /*******      /**    /******* \n'+
+    '/**////     /**   /**///**      /**    /**////  \n'+
+    '/**         **    /**  //**     /**    /**      \n'+
+    '/**        **     /**   //**    /**    /**      \n'+
+    '//        //      //     //     //     //       \n'+
+    '-------------------------------------------------------\n')
+    print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\n'+
+    'Date of last edit: 14/05/2023\n'+
+    'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
+    '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
+    '\t     selected for benchmarking and testing. Comments on \n'+
+    '\t     the approaches used are in progress.\n'+
+    '\n'+'System requirements:\n'+
+    '- Python >= 3.10\n'+
+    '- Numpy >= 1.13\n'+
+    '- npy-append-array >= 0.9.5\n'+
+    '- Sympy >=1.7.1\n'+
+    '- Scipy >= 0.19\n'+
+    '- PySCF >=2.0a, requires either Unix-based system or WSL\n'+
+    '--------------------------------------------------------------------\n')
+
+    print('Ground state calculations:\n')
+    # Performing calculation of all constant variables to remove the need to repeat it multiple times.
+    r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
+
+    # Compute the ground state first
+    P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+    # initialising all variable arrays
+    energies=[]
+    mu=[]
+    propagationtimes=[]
+    SE=[]
+    # Writing a short .txt file giving the simulation parameters to the project folder
+    os.mkdir(os.path.join(os.getcwd(),projectname))
+    lines = ['PyRTP run parameters','------------------------','Propagator: '+propagator,'Timesteps: '+str(nsteps),'Timestep: '+str(dt),'Kick strength: '+str(kickstrength),'Kick direction: '+str(kickdirection)]
+    with open(projectname+'/'+projectname+'_parameters.txt', 'w') as f:
+        for line in lines:
+            f.write(line)
+            f.write('\n')
+
+    # time array can be set now
+    t=np.arange(0,nsteps*dt,dt)
+
+    for i in range(0,nsteps):
+        print('--------------------------------------------------------------------\nPropagation timestep: '+str(i+1))
+        #Applying perturbation
+        KS=GaussianKick(KS,kickstrength,kickdirection,t[i],r_x,r_y,r_z,CGF_He,CGF_H,dr)
+        #Getting perturbed density matrix
+        P=GetP(KS,S)
+        # Propagating depending on method.
+        # AETRS, CAETRS and CFM4 require 2 prior timesteps, which use ETRS
+        if i<2 and propagator==('AETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        elif i<2 and propagator==('CAETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        elif i<2 and propagator==('CFM4'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        elif i>1 and propagator==('AETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+        elif i>1 and propagator==('CAETRS'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+        elif i>1 and propagator==('CFM4'):
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+        else:
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+        print('Propagation time: '+str(proptime))
+        # Converging on accurate KS and P
+        P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+        # Information Collection
+        D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
+        mu_t=np.trace(np.dot(D_tot,P))
+        energies.append(H)
+        SE.append(ShannonEntropy(P))
+        mu.append(mu_t)
+        propagationtimes.append(proptime)
+        # Saving data to external files every 10 steps
+        if  i>0 and (i+1)%10==0:
+            with NpyAppendArray(projectname+'/'+projectname+'_energies.npy') as npaa:
+                npaa.append(np.array(energies[i-9:i+1]))
+            with NpyAppendArray(projectname+'/'+projectname+'_mu.npy') as npaa:
+                npaa.append(np.array(mu[i-9:i+1]))
+            with NpyAppendArray(projectname+'/'+projectname+'_timings.npy') as npaa:
+                npaa.append(np.array(propagationtimes[i-9:i+1]))
+            with NpyAppendArray(projectname+'/'+projectname+'_SE.npy') as npaa:
+                npaa.append(np.array(SE[i-9:i+1]))
+            with NpyAppendArray(projectname+'/'+projectname+'_t.npy') as npaa:
+                npaa.append(t[i-9:i+1])
+
+        # Outputting calculated data
+        print('Total dipole moment: '+str(mu_t))
+        print('Shannon entropy: '+str(SE[i]),end='\n')
+    
+    return t,energies,mu,propagationtimes,SE
+
 #%%
-# DFT parameters
-SCFiterations=1
+# Simulation parameters
+nsteps=100
+timestep=0.1
+SCFiterations=100
+kickstrength=0.001
+kickdirection=[1,0,0]
+proptype='CFM4'
+projectname='CFM4run'
 
 #Grid parameters
 L=10.
@@ -719,25 +745,24 @@ Z_I = [2.,1.]
 Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
 P_init=np.array([[1.333218,0.],[0.,0.666609]])
 
-energies,mu,timings=rttddft(102,0.1,'CFM4',SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init)
-# %%
-plt.plot(timings)
-CFM4timings=timings[2:102]
-#%%
-plt.plot(CFM4timings)
-
-plt.xlabel('Timestep')
-plt.ylabel('Runtime, $s$')
-plt.title('A plot showing the runtimes of the CFM4 propagator in PyRTP')
-plt.legend(['CFM4'])
-# %%
-plt.plot(np.log(CNtimings))
-plt.plot(np.log(EMtimings))
-plt.plot(np.log(ETRStimings))
-plt.plot(np.log(AETRStimings))
-plt.plot(np.log(CAETRStimings))
+t,energies,mu,timings,SE=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init,kickstrength,kickdirection,projectname)
 
 #%%
+# Post-Processing section
+#%%
+# Energy plot
+plt.plot(t,np.array(energies))
+plt.xlabel('Time, $s$')
+plt.ylabel('Energy, $Ha$')
+
+#%%
+# Dipole moment plot
+plt.plot(t,np.array(mu))
+plt.xlabel('Time, $s$')
+plt.ylabel('Dipole moment, $\mu$')
+
+#%%
+# Absorption Spectrum plot
 mu=np.array(mu)
 c=299792458
 h=6.62607015e-34
@@ -750,6 +775,4 @@ plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
 #plt.xlim([0, 5e-7])
-#%%
-np.save('CFM4run.npy',CFM4timings)
-# %%
+
