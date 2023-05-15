@@ -624,6 +624,16 @@ def ShannonEntropy(P):
 
     return SE
 
+def vonNeumannEntropy(P):
+    vNE=np.trace(np.dot(P,np.log(P)))
+    return vNE
+
+def EntropyPInitBasis(P,Pini):
+    PPinitBasis=np.matmul(np.linalg.inv(Pini),np.matmul(P,Pini))
+    print(PPinitBasis)
+    EPinitBasis=np.trace(np.dot(np.abs(PPinitBasis),np.log(np.abs(PPinitBasis))))
+    return EPinitBasis
+
 def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init,kickstrength,kickdirection,projectname):
     # Ground state stuff
     print(' *******           *******   ********** *******\n'+ 
@@ -657,10 +667,13 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     # Compute the ground state first
     P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
     # initialising all variable arrays
+    Pgs=P
     energies=[]
     mu=[]
     propagationtimes=[]
     SE=[]
+    vNE=[]
+    EPinit=[]
     # Writing a short .txt file giving the simulation parameters to the project folder
     os.mkdir(os.path.join(os.getcwd(),projectname))
     lines = ['PyRTP run parameters','------------------------','Propagator: '+propagator,'Timesteps: '+str(nsteps),'Timestep: '+str(dt),'Kick strength: '+str(kickstrength),'Kick direction: '+str(kickdirection)]
@@ -702,6 +715,8 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
         mu_t=np.trace(np.dot(D_tot,P))
         energies.append(H)
         SE.append(ShannonEntropy(P))
+        vNE.append(vonNeumannEntropy(P))
+        EPinit.append(EntropyPInitBasis(P,Pgs))
         mu.append(mu_t)
         propagationtimes.append(proptime)
         # Saving data to external files every 10 steps
@@ -716,12 +731,18 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
                 npaa.append(np.array(SE[i-9:i+1]))
             with NpyAppendArray(projectname+'/'+projectname+'_t.npy') as npaa:
                 npaa.append(t[i-9:i+1])
+            with NpyAppendArray(projectname+'/'+projectname+'_vNE.npy') as npaa:
+                npaa.append(vNE[i-9:i+1])
+            with NpyAppendArray(projectname+'/'+projectname+'_EPinit.npy') as npaa:
+                npaa.append(EPinit[i-9:i+1])
 
         # Outputting calculated data
         print('Total dipole moment: '+str(mu_t))
-        print('Shannon entropy: '+str(SE[i]),end='\n')
+        print('Shannon entropy: '+str(SE[i]))
+        print('von Neumann Entropy: '+str(vNE[i]))
+        print('P_init Basis Entropy: '+str(EPinit[i]))
     
-    return t,energies,mu,propagationtimes,SE
+    return t,energies,mu,propagationtimes,SE,vNE,EPinit
 
 #%%
 # Simulation parameters
@@ -745,7 +766,7 @@ Z_I = [2.,1.]
 Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
 P_init=np.array([[1.333218,0.],[0.,0.666609]])
 
-t,energies,mu,timings,SE=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init,kickstrength,kickdirection,projectname)
+t,energies,mu,timings,SE,vNE,EPinit=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init,kickstrength,kickdirection,projectname)
 
 #%%
 # Post-Processing section
