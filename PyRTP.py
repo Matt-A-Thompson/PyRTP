@@ -630,7 +630,6 @@ def vonNeumannEntropy(P):
 
 def EntropyPInitBasis(P,Pini):
     PPinitBasis=np.matmul(np.linalg.inv(Pini),np.matmul(P,Pini))
-    print(PPinitBasis)
     EPinitBasis=np.trace(np.dot(np.abs(PPinitBasis),np.log(np.abs(PPinitBasis))))
     return EPinitBasis
 
@@ -732,9 +731,9 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
             with NpyAppendArray(projectname+'/'+projectname+'_t.npy') as npaa:
                 npaa.append(t[i-9:i+1])
             with NpyAppendArray(projectname+'/'+projectname+'_vNE.npy') as npaa:
-                npaa.append(vNE[i-9:i+1])
+                npaa.append(np.array(vNE[i-9:i+1]))
             with NpyAppendArray(projectname+'/'+projectname+'_EPinit.npy') as npaa:
-                npaa.append(EPinit[i-9:i+1])
+                npaa.append(np.array(EPinit[i-9:i+1]))
 
         # Outputting calculated data
         print('Total dipole moment: '+str(mu_t))
@@ -746,13 +745,13 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
 
 #%%
 # Simulation parameters
-nsteps=100
+nsteps=20
 timestep=0.1
 SCFiterations=100
-kickstrength=0.001
+kickstrength=0.1
 kickdirection=[1,0,0]
-proptype='CFM4'
-projectname='CFM4run'
+proptype='ETRS'
+projectname='ETRSrun'
 
 #Grid parameters
 L=10.
@@ -784,10 +783,13 @@ plt.ylabel('Dipole moment, $\mu$')
 
 #%%
 # Absorption Spectrum plot
+filterpercentage=0
 mu=np.array(mu)
 c=299792458
 h=6.62607015e-34
 sp=scipy.fft.rfft(mu)
+indexes=np.where(sp<np.percentile(sp,filterpercentage))[0]
+sp[indexes]=0
 freq = scipy.fft.rfftfreq(mu.size,(0.1*2.4188843265857e-17))
 freqshift=scipy.fft.fftshift(freq)
 ld=c/freq
@@ -796,4 +798,3 @@ plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
 #plt.xlim([0, 5e-7])
-
