@@ -1,0 +1,20 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: PyRTP
+message: 'If you use this software, please cite it as below.'
+type: software
+authors:
+  - given-names: Matthew
+    family-names: Thompson
+    email: MatThompson@lincoln.ac.uk
+    affiliation: University of Lincoln
+    orcid: 'https://orcid.org/0009-0000-6677-3346'
+  - given-names: Matthew
+    family-names: Watkins
+    email: MWatkins@lincoln.ac.uk
+    affiliation: University of Lincoln
+    orcid: 'https://orcid.org/0000-0003-4215-684X'
+repository-code: 'https://github.com/Matt-A-Thompson/PyRTP'
+license: GPL-3.0
