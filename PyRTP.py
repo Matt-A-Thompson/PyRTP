@@ -5,11 +5,12 @@ from npy_append_array import NpyAppendArray #used to save data as external array
 import math
 import scipy
 import matplotlib.pyplot as plt
-from pyscf import gto, dft, lib
+#from pyscf import gto, dft, lib
 from sympy import Matrix
 from scipy.interpolate import lagrange
 import time
 import os
+import pylibxc
 # the number of threads can be specified by uncommenting one of the following functions,
 # run 'np.show_config()' to determine which to use.
 #os.environ['OMP_NUM_THREADS']='8'
@@ -65,24 +66,19 @@ def construct_CGF(GTOs,N,N_i,Coef) :
     
     return CGF
 
-def calculate_realspace_density(CGF_0,CGF_1,N,N_i,P,dr) :
+def calculate_realspace_density(phi,N,N_i,P,dr,) :
 
     n_el_r = np.zeros(N).reshape(N_i,N_i,N_i)
     n_el_total = 0
 
-    for i in range(0,N_i) :
-        for j in range(0,N_i) :
-            for k in range(0,N_i) :
+    for i in range(0,len(phi)) :
+        for j in range(0,len(phi)) :
+            n_el_r += P[i][j]*phi[i]*phi[j]
 
-                n_el_r[i][j][k] = P[0][0]*CGF_0[i][j][k]**2 + P[0][1]*CGF_0[i][j][k]*CGF_1[i][j][k] +\
-                    P[1][0]*CGF_1[i][j][k]*CGF_0[i][j][k] + P[1][1]*CGF_1[i][j][k]**2
-
-                n_el_total += n_el_r[i][j][k]*dr
-
-    return n_el_r, n_el_total
+    return n_el_r, np.sum(n_el_r)*dr
 
 def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I) :
-
+    # Multithread this function
     R_pp = np.sqrt(2.)/5.
 
     n_c_r = np.zeros(N).reshape(N_i,N_i,N_i)
@@ -97,63 +93,40 @@ def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I) :
 
     return n_c_r
     
-def grid_integration(V_r,dr,CGF_He,CGF_H) :
+def grid_integration(V_r,dr,phi):
+    V = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
 
-    V = [[0.,0.],[0.,0.]]
-    
-    for i in range(0,len(V_r)) :
-        for j in range(0,len(V_r)) :
-            for k in range(0,len(V_r)) :
-             
-                #Integrate over grid points
-                V[0][0] += V_r[i][j][k]*CGF_He[i][j][k]**2*dr
-                V[0][1] += V_r[i][j][k]*CGF_He[i][j][k]*CGF_H[i][j][k]*dr
-                V[1][0] += V_r[i][j][k]*CGF_H[i][j][k]*CGF_He[i][j][k]*dr
-                V[1][1] += V_r[i][j][k]*CGF_H[i][j][k]**2*dr                                                                             
-    
+    for i in range(0,len(phi)):
+        for j in range(0,len(phi)):
+
+            V[i][j] = np.sum(np.real(V_r)*phi[i]*phi[j])*dr
+
     return V
 
-def energy_calculation(V,P) :
-    
-    E = P[0][0]*V[0][0] + P[0][1]*V[0][1] + P[1][0]*V[1][0] + P[1][1]*V[1][1]
-    
-    return E
+def energy_calculation(V,P): 
+    return np.sum(P*V)
 
-def calculate_overlap(N_i,dr,CGF_He,CGF_H) :
+def calculate_overlap(N,N_i,dr,phi):
     
-    S = [[0.,0.],[0.,0.]] #initialise a 2 by 2 matrix of zeros.
-    
-    #Loop through grid points 
-    for i in range(0,N_i) : 
-        for j in range(0,N_i) :
-            for k in range(0,N_i) :
-                #Sum the overlap contributions from each CGF as in Eq. 3 
-                S[0][0] += CGF_He[i][j][k]**2*dr
-                S[0][1] += CGF_He[i][j][k]*CGF_H[i][j][k]*dr
-                S[1][0] += CGF_H[i][j][k]*CGF_He[i][j][k]*dr
-                S[1][1] += CGF_H[i][j][k]**2*dr
+    V_temp = np.ones(N).reshape(N_i,N_i,N_i)
+    S = grid_integration(V_temp,dr,phi)
 
     return S
 
-def calculate_kinetic_derivative(N,N_i,G_u,G_v,G_w,PW_He_G,PW_H_G,L) :
+def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L) :
 
-    delta_T = [[0.,0.],[0.,0.]]
+    delta_T = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
 
     for i in range(0,N_i) :
         for j in range(0,N_i) :
             for k in range(0,N_i) :
 
-                g = np.array([G_u[i],G_v[j],G_w[k]]) #Select current G vector
+                g = np.array([G_u[i],G_v[j],G_w[k]])
 
-                #Calculate Kinetic energy matrix as per Eq. 7
-                #np.real is required here as PWs are complex. 
-                #The complex component is ~zero after taking PW_He_G^2 but the result still contains a complex term
-                
-                delta_T[0][0] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(PW_He_G[i][j][k]),PW_He_G[i][j][k]))
-                delta_T[0][1] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(PW_He_G[i][j][k]),PW_H_G[i][j][k]))
-                delta_T[1][0] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(PW_H_G[i][j][k]),PW_He_G[i][j][k]))
-                delta_T[1][1] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(PW_H_G[i][j][k]),PW_H_G[i][j][k]))
+                for I in range(0,len(phi)) :
+                    for J in range(0,len(phi)) :
 
+                        delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
 
     return delta_T
 
@@ -179,39 +152,45 @@ def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L) :
     
     return np.fft.ifftshift(Vg), E_hart_G #result is shifted back. 
 
-def calculate_hartree_real(N_i,V_r,n_r,dr) :
-    
-    E_hart_r = 0.
-    
-    for i in range(0,N_i) :
-        for j in range(0,N_i) :
-            for k in range(0,N_i) :
-                E_hart_r += 0.5*V_r[i][j][k]*n_r[i][j][k]*dr
+def calculate_hartree_real(V_r,n_r,dr) :
                 
-    return E_hart_r
+    return 0.5*np.sum(V_r*n_r)*dr
 
-def calculate_XC_potential(N,N_i,n_el_r):
+#def calculate_XC_potential(N,N_i,n_el_r):
     
-    V_XC_r = np.zeros(N).reshape(N_i,N_i,N_i)
+#    V_XC_r = np.zeros(N).reshape(N_i,N_i,N_i)
     
-    for i in range(0,N_i) :
-        for j in range(0,N_i) :
-            #Loop through first two axis and obtain a list of n(r) for the third axis
-            V_XC_r[i][j] = dft.xcfun.eval_xc('LDAERF',n_el_r[i][j])[1][0] #get the XC term for each n(r) in the list
-            
-    return V_XC_r
+#    for i in range(0,N_i) :
+#        for j in range(0,N_i) :
+#            #Loop through first two axis and obtain a list of n(r) for the third axis
+#            V_XC_r[i][j] = dft.xcfun.eval_xc('LDAERF',n_el_r[i][j])[1][0] #get the XC term for each n(r) in the list
+#            
+#    return V_XC_r
 
-def calculate_XC_energy(N_i,n_el_r,dr):
+#def calculate_XC_energy(N_i,n_el_r,dr):
 
-    E_XC = 0.
+#    E_XC = 0.
 
-    for i in range(0,N_i) :
-        for j in range(0,N_i) :
-            XC_ene = dft.xcfun.eval_xc('LDAERF',n_el_r[i][j])[0]
-            for k in range(0,N_i) :
-                E_XC += XC_ene[k]*n_el_r[i][j][k]*dr
-            
-    return E_XC
+#    for i in range(0,N_i) :
+#        for j in range(0,N_i) :
+#            XC_ene = dft.xcfun.eval_xc('LDAERF',n_el_r[i][j])[0]
+#            for k in range(0,N_i) :
+#                E_XC += XC_ene[k]*n_el_r[i][j][k]*dr
+#            
+#    return E_XC
+
+def calculate_XC_pylibxc(n_el_r,N_i,dr):
+    func=pylibxc.LibXCFunctional('LDA_XC_TETER93','unpolarized')
+    inp={}
+    inp["rho"]=n_el_r
+    ret=func.compute(n_el_r)
+    E_XC_r=ret['zk']
+    V_XC_r=ret['vrho']
+    V_XC_r = V_XC_r.reshape(N_i,N_i,N_i)
+    E_XC_r = E_XC_r.reshape(N_i,N_i,N_i)
+    E_XC=np.sum(E_XC_r*n_el_r)*dr
+
+    return V_XC_r, E_XC
 
 def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I) :
 
@@ -233,12 +212,7 @@ def calculate_self_energy(Z_I) :
 
     R_pp = np.sqrt(2.)/5. #R_{I}^{c}
 
-    E_self = 0.
-
-    for n in range(0,len(Z_I)) :
-        E_self += -(2*np.pi)**(-1/2)*Z_I[n]**2/R_pp
-
-    return E_self
+    return np.sum(-(2*np.pi)**(-1/2)*Z_I**2/R_pp)
 
 def calculate_Ion_interaction(Z_I,R_I) :
 
@@ -254,104 +228,103 @@ def dftSetup(R_I,alpha,Coef,L,N_i,Z_I):
     CGF_He = construct_CGF(GTOs_He,N,N_i,Coef)
     GTOs_H = construct_GTOs('H',N,N_i,r_x,r_y,r_z,R_I,alpha)
     CGF_H = construct_CGF(GTOs_H,N,N_i,Coef)
+    phi = np.array([CGF_He,CGF_H])
     G_u = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     G_v = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     G_w = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     PW_He_G = np.fft.fftshift(np.fft.fftn(CGF_He))
     PW_H_G = np.fft.fftshift(np.fft.fftn(CGF_H))
-    S = calculate_overlap(N_i,dr,CGF_He,CGF_H)
-    delta_T = calculate_kinetic_derivative(N,N_i,G_u,G_v,G_w,PW_He_G,PW_H_G,L)
+    phi_PW_G = np.array([PW_He_G,PW_H_G])
+    S = calculate_overlap(N,N_i,dr,phi)
+    delta_T = calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L)
     E_self = calculate_self_energy(Z_I)
     E_II = calculate_Ion_interaction(Z_I,R_I)
 
-    return r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II
+    return r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi
 
-def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L):
+def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi):
     #r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
-    n_el_r, n_el_r_tot  = calculate_realspace_density(CGF_He,CGF_H,N,N_i,P,dr)
+    n_el_r, n_el_r_tot  = calculate_realspace_density(phi,N,N_i,P,dr)
     n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
     n_r = n_el_r + n_c_r
     T = energy_calculation(delta_T,P)
     n_G = np.fft.fftn(n_r)
     V_G, E_hart_G = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L)
     V_r = np.fft.ifftn(V_G)
-    V_hart = grid_integration(V_r,dr,CGF_He,CGF_H)
-    E_hart_r = calculate_hartree_real(N_i,V_r,n_r,dr)
-    V_XC_r = calculate_XC_potential(N,N_i,n_el_r)
-    V_XC = grid_integration(V_XC_r,dr,CGF_He,CGF_H)
-    E_XC = calculate_XC_energy(N_i,n_el_r,dr)
+    V_hart = grid_integration(V_r,dr,phi)
+    E_hart_r = calculate_hartree_real(V_r,n_r,dr)
+    V_XC_r,E_XC = calculate_XC_pylibxc(n_el_r,N_i,dr)
+    V_XC = grid_integration(V_XC_r,dr,phi)
     V_SR_r = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I)
-    V_SR = grid_integration(V_SR_r,dr,CGF_He,CGF_H)
+    V_SR = grid_integration(V_SR_r,dr,phi)
     E_SR = energy_calculation(V_SR,P)
     E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
 
     return E_0
 
-def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II):
+def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi):
 
-	P = P_init
-	n_el_r, n_el_r_tot  = calculate_realspace_density(CGF_He,CGF_H,N,N_i,P,dr)
-	n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
-	n_r = n_el_r + n_c_r
-	T = energy_calculation(delta_T,P)
-	n_G = np.fft.fftn(n_r)
-	V_G, E_hart_G = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L)
-	V_r = np.fft.ifftn(V_G)
-	V_hart = grid_integration(V_r,dr,CGF_He,CGF_H)
-	E_hart_r = calculate_hartree_real(N_i,V_r,n_r,dr)
-	V_XC_r = calculate_XC_potential(N,N_i,n_el_r)
-	V_XC = grid_integration(V_XC_r,dr,CGF_He,CGF_H)
-	E_XC = calculate_XC_energy(N_i,n_el_r,dr)
-	V_SR_r = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I)
-	V_SR = grid_integration(V_SR_r,dr,CGF_He,CGF_H)
-	E_SR = energy_calculation(V_SR,P)
-	KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
-	KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
-	S=Matrix(S)
-	U,s = S.diagonalize()
-	s = s**(-0.5)
-	X = np.matmul(np.array(U,dtype='float64'),np.array(s,dtype='float64'))
-	X_dag = np.matrix.transpose(np.array(X,dtype='float64'))
+    P = P_init
+    n_el_r, n_el_r_tot  = calculate_realspace_density(phi,N,N_i,P,dr)
+    n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
+    n_r = n_el_r + n_c_r
+    T = energy_calculation(delta_T,P)
+    n_G = np.fft.fftn(n_r)
+    V_G, E_hart_G = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L)
+    V_r = np.fft.ifftn(V_G)
+    V_hart = grid_integration(np.real(V_r),dr,phi)
+    E_hart_r = calculate_hartree_real(V_r,n_r,dr)
+    V_XC_r,E_XC = calculate_XC_pylibxc(n_el_r,N_i,dr)
+    V_XC = grid_integration(V_XC_r,dr,phi)
+    V_SR_r = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I)
+    V_SR = grid_integration(V_SR_r,dr,phi)
+    E_SR = energy_calculation(V_SR,P)
+    KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
+    KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
+    S=Matrix(S)
+    U,s = S.diagonalize()
+    s = s**(-0.5)
+    X = np.matmul(np.array(U,dtype='float64'),np.array(s,dtype='float64'))
+    X_dag = np.matrix.transpose(np.array(X,dtype='float64'))
         
-	err = 1.0e-6 #The error margin by which convergence of the P matrix is measured
+    err = 1.0e-6 #The error margin by which convergence of the P matrix is measured
 
-	P = P_init #reset P to atomic guess.
-	for I in range(0,iterations):
-		n_el_r, n_el_r_tot=calculate_realspace_density(CGF_He,CGF_H,N,N_i,P,dr)
-		n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
-		n_r = n_el_r + n_c_r
-		n_G = np.fft.fftn(n_r)
-		V_G, E_hart_G = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L)
-		V_r = np.fft.ifftn(V_G)
-		V_hart = grid_integration(V_r,dr,CGF_He,CGF_H)
-		E_hart_r = calculate_hartree_real(N_i,V_r,n_r,dr)
-		V_XC_r = calculate_XC_potential(N,N_i,n_el_r)
-		V_XC = grid_integration(V_XC_r,dr,CGF_He,CGF_H)
-		E_XC = calculate_XC_energy(N_i,n_el_r,dr)
-		V_SR_r = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I)
-		V_SR = grid_integration(V_SR_r,dr,CGF_He,CGF_H)
-		E_SR = energy_calculation(V_SR,P)
-		E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
-		KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
-		KS = np.real(KS)
-		KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
-		C_temp, e = KS_temp.diagonalize()
-		C = np.matmul(X,C_temp)
-		print("iteration : ", I+1, "\n")
-		print("total energy : ", np.real(E_0), "\n")
-		print("density matrix : ","\n", P, "\n")
-		print("KS matrix : ","\n", KS, "\n")
-		P_new=np.array([[0., 0.],[0., 0.]])
-		for u in range(0,2) :
-			for v in range(0,2) :
-				for p in range(0,1) :
-					P_new[u][v] += C[u][p]*C[v][p]
-				P_new[u][v] *=2
-		if abs(P[0][0]-P_new[0][0]) <= err and abs(P[0][1]-P_new[0][1]) <= err and abs(P[1][0]-P_new[1][0]) <= err and abs(P[1][1]-P_new[1][1]) <= err :
-			break
+    P = P_init #reset P to atomic guess.
+    for I in range(0,iterations):
+        n_el_r, n_el_r_tot=calculate_realspace_density(phi,N,N_i,P,dr)
+        n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
+        n_r = n_el_r + n_c_r
+        n_G = np.fft.fftn(n_r)
+        V_G, E_hart_G = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L)
+        V_r = np.fft.ifftn(V_G)
+        V_hart = grid_integration(np.real(V_r),dr,phi)
+        E_hart_r = calculate_hartree_real(V_r,n_r,dr)
+        V_XC_r,E_XC = calculate_XC_pylibxc(n_el_r,N_i,dr)
+        V_XC = grid_integration(V_XC_r,dr,phi)
+        V_SR_r = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I)
+        V_SR = grid_integration(V_SR_r,dr,phi)
+        E_SR = energy_calculation(V_SR,P)
+        E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
+        KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
+        KS = np.real(KS)
+        KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
+        C_temp, e = KS_temp.diagonalize()
+        C = np.matmul(X,C_temp)
+        print("iteration : ", I+1, "\n")
+        print("total energy : ", np.real(E_0), "\n")
+        print("density matrix : ","\n", P, "\n")
+        print("KS matrix : ","\n", KS, "\n")
+        P_new=np.array([[0., 0.],[0., 0.]])
+        for u in range(0,2) :
+            for v in range(0,2) :
+                for p in range(0,1) :
+                    P_new[u][v] += C[u][p]*C[v][p]
+                P_new[u][v] *=2
+        if abs(P[0][0]-P_new[0][0]) <= err and abs(P[0][1]-P_new[0][1]) <= err and abs(P[1][0]-P_new[1][0]) <= err and abs(P[1][1]-P_new[1][1]) <= err :
+            break
                 
-		P = P_new 
-	return P,np.real(E_0),C,KS
+        P = P_new 
+    return P,np.real(E_0),C,KS
 
 # GaussianKick - provides energy to the system in the form of an electric pulse
 # with a Gaussian envelop (run each propagation step!)
@@ -386,7 +359,7 @@ def propagator(select,H1,H2,dt): #propagator functions
 
     return U
 
-def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i):
+def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i,phi):
     match select:
         case 'CN':
             st=time.time()
@@ -406,7 +379,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L)
+            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi)
             # correct
             H_c=H+(1/2)*(E_0-H)
             U=np.real(propagator(select,H_c,[],dt))
@@ -436,7 +409,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L)
+            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi)
             H_c=H+(1/2)*(E_0-H)
             U=np.real(propagator(select,H_c,[],dt))
             C_new=np.dot(U,C)
@@ -464,7 +437,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L)
+            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi)
             H_c=H+(1/2)*(E_0-H)
             U=np.real(propagator('EM',H_c,[],dt))
             C_new=np.dot(U,C)
@@ -474,7 +447,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
-            Hdt=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L)
+            Hdt=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi)
             U=np.real(propagator(select,H,Hdt,dt))
             C_new=np.dot(U,C)
             P_new=np.array([[0., 0.],[0., 0.]])
@@ -513,7 +486,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L)
+            E_0=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi)
             H_c=H+(1/2)*(E_0-H)
             Hdt=2*H_c-Hprev
             U=np.real(propagator(select,H_c,Hdt,dt))
@@ -644,8 +617,8 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     '/**        **     /**   //**    /**    /**      \n'+
     '//        //      //     //     //     //       \n'+
     '-------------------------------------------------------\n')
-    print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\n'+
-    'Date of last edit: 14/05/2023\n'+
+    print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\nWarren Lynch - WLynch@lincoln.ac.uk\n'+
+    'Date of last edit: 05/07/2023\n'+
     'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
     '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
     '\t     selected for benchmarking and testing. Comments on \n'+
@@ -656,15 +629,15 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     '- npy-append-array >= 0.9.5\n'+
     '- Sympy >=1.7.1\n'+
     '- Scipy >= 0.19\n'+
-    '- PySCF >=2.0a, requires either Unix-based system or WSL\n'+
+    '- PyLibXC\n'+
     '--------------------------------------------------------------------\n')
 
     print('Ground state calculations:\n')
     # Performing calculation of all constant variables to remove the need to repeat it multiple times.
-    r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
+    r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
 
     # Compute the ground state first
-    P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+    P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi)
     # initialising all variable arrays
     Pgs=P
     energies=[]
@@ -693,22 +666,22 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
         # Propagating depending on method.
         # AETRS, CAETRS and CFM4 require 2 prior timesteps, which use ETRS
         if i<2 and propagator==('AETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi)
         elif i<2 and propagator==('CAETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi)
         elif i<2 and propagator==('CFM4'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi)
         elif i>1 and propagator==('AETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi)
         elif i>1 and propagator==('CAETRS'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi)
         elif i>1 and propagator==('CFM4'):
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi)
         else:
-            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i)
+            P,proptime=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi)
         print('Propagation time: '+str(proptime))
         # Converging on accurate KS and P
-        P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II)
+        P,H,C,KS=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi)
         # Information Collection
         D_x,D_y,D_z,D_tot=transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr)
         mu_t=np.trace(np.dot(D_tot,P))
@@ -745,13 +718,13 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
 
 #%%
 # Simulation parameters
-nsteps=20
+nsteps=100
 timestep=0.1
 SCFiterations=100
 kickstrength=0.1
 kickdirection=[1,0,0]
-proptype='ETRS'
-projectname='ETRSrun'
+proptype='CFM4'
+projectname='CFM4run'
 
 #Grid parameters
 L=10.
@@ -761,7 +734,7 @@ N_i=60
 alpha = [[0.3136497915, 1.158922999, 6.362421394],[0.1688554040, 0.6239137298, 3.425250914]] #alpha[0] for He, alpha[1] for H
 Coef = [0.4446345422, 0.5353281423, 0.1543289673] #Coefficients are the same for both He and H
 R_I = [np.array([0.,0.,0.]), np.array([0.,0.,1.4632])] #R_I[0] for He, R_I[1] for H.
-Z_I = [2.,1.]
+Z_I = np.array([2.,1.])
 Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
 P_init=np.array([[1.333218,0.],[0.,0.666609]])
 
