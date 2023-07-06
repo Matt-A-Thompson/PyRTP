@@ -5,12 +5,13 @@ from npy_append_array import NpyAppendArray #used to save data as external array
 import math
 import scipy
 import matplotlib.pyplot as plt
-#from pyscf import gto, dft, lib
 from sympy import Matrix
 from scipy.interpolate import lagrange
 import time
 import os
 import pylibxc
+from numba import jit
+
 # the number of threads can be specified by uncommenting one of the following functions,
 # run 'np.show_config()' to determine which to use.
 #os.environ['OMP_NUM_THREADS']='8'
@@ -32,8 +33,10 @@ def GridCreate(L,N_i):
 	return r_x,r_y,r_z,N,dr
 
 #a_GTO = exponent, r_GTO = grid position vector, R_GTO = nuclei position vector
+@jit(nopython=True,cache=True)
 def GTO(a_GTO,r_GTO,R_GTO): return (2*a_GTO/np.pi)**(3/4)*np.exp(-a_GTO*(np.linalg.norm(r_GTO - R_GTO))**2)
 
+@jit(nopython=True,cache=True)
 def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,alpha) :
 
     #create a matrix of grid points for each of the three GTOs, initialised to zero.
@@ -59,6 +62,7 @@ def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,alpha) :
 
     return GTO_p
 
+@jit(nopython=True,cache=True)
 def construct_CGF(GTOs,N,N_i,Coef) :
 
     CGF = np.zeros(N).reshape(N_i,N_i,N_i) #create a matrix of grid points initialised to zero.
@@ -66,8 +70,9 @@ def construct_CGF(GTOs,N,N_i,Coef) :
     
     return CGF
 
+@jit(nopython=True,cache=True)
 def calculate_realspace_density(phi,N,N_i,P,dr,) :
-
+    # Numba integration
     n_el_r = np.zeros(N).reshape(N_i,N_i,N_i)
     n_el_total = 0
 
@@ -77,8 +82,9 @@ def calculate_realspace_density(phi,N,N_i,P,dr,) :
 
     return n_el_r, np.sum(n_el_r)*dr
 
+@jit(nopython=True,cache=True)
 def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I) :
-    # Multithread this function
+    # Use numba
     R_pp = np.sqrt(2.)/5.
 
     n_c_r = np.zeros(N).reshape(N_i,N_i,N_i)
@@ -92,10 +98,11 @@ def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I) :
                     n_c_r[i][j][k] += -Z_I[n]/(R_pp**3)*np.pi**(-3/2)*np.exp(-((r-R_I[n])/R_pp).dot((r-R_I[n])/R_pp))
 
     return n_c_r
-    
+
+@jit(nopython=True,cache=True)
 def grid_integration(V_r,dr,phi):
     V = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
-
+    # Numba here
     for i in range(0,len(phi)):
         for j in range(0,len(phi)):
 
@@ -106,6 +113,7 @@ def grid_integration(V_r,dr,phi):
 def energy_calculation(V,P): 
     return np.sum(P*V)
 
+@jit(nopython=True,cache=True)
 def calculate_overlap(N,N_i,dr,phi):
     
     V_temp = np.ones(N).reshape(N_i,N_i,N_i)
@@ -114,7 +122,7 @@ def calculate_overlap(N,N_i,dr,phi):
     return S
 
 def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L) :
-
+    # Deffo numba here
     delta_T = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
 
     for i in range(0,N_i) :
@@ -122,16 +130,14 @@ def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L) :
             for k in range(0,N_i) :
 
                 g = np.array([G_u[i],G_v[j],G_w[k]])
-
                 for I in range(0,len(phi)) :
                     for J in range(0,len(phi)) :
-
                         delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
 
     return delta_T
 
 def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L) :
-
+    # Numba here
     nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
     Vg = np.complex128(np.zeros(N).reshape(N_i,N_i,N_i))
     E_hart_G = 0. ## Hartree energy in reciprocal space
@@ -192,8 +198,9 @@ def calculate_XC_pylibxc(n_el_r,N_i,dr):
 
     return V_XC_r, E_XC
 
+@jit(nopython=True,cache=True)
 def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I) :
-
+    # Numba here
     V_SR_r = np.zeros(N).reshape(N_i,N_i,N_i)
     alpha_pp = 5./np.sqrt(2.) #pseudopotential parameter, alpha_pp = 1/R^{c}_{I}
     
@@ -208,12 +215,14 @@ def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I) :
                         
     return V_SR_r
 
+@jit(nopython=True,cache=True)
 def calculate_self_energy(Z_I) :
 
     R_pp = np.sqrt(2.)/5. #R_{I}^{c}
 
     return np.sum(-(2*np.pi)**(-1/2)*Z_I**2/R_pp)
 
+@jit(nopython=True,cache=True)
 def calculate_Ion_interaction(Z_I,R_I) :
 
     R_pp = np.sqrt(2.)/5. #R_{I}^{c}
@@ -242,8 +251,8 @@ def dftSetup(R_I,alpha,Coef,L,N_i,Z_I):
 
     return r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi
 
+
 def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi):
-    #r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II=dftSetup(R_I,alpha,Coef,L,N_i,Z_I)
     n_el_r, n_el_r_tot  = calculate_realspace_density(phi,N,N_i,P,dr)
     n_c_r = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I)
     n_r = n_el_r + n_c_r
@@ -521,8 +530,9 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
     run=et-st
     return P_new,run
 
+@jit(nopython=True,cache=True)
 def transition_dipole_tensor_calculation(r_x,r_y,r_z,CGF_He,CGF_H,dr) :
-
+ # This needs numpy sums
     D_x = [[0.,0.],[0.,0.]]
     for i in range(0,len(r_x)) :
         for j in range(0,len(r_x)) :
@@ -582,6 +592,7 @@ def LagrangeExtrapolate(t,H,tnew):
     f=lagrange(t,H)
     return np.real(f(tnew))
 
+@jit(nopython=True,cache=True)
 def pop_analysis(P,S) :
     PS = np.matmul(P,S)
     pop_total = np.trace(PS)
@@ -606,6 +617,7 @@ def EntropyPInitBasis(P,Pini):
     EPinitBasis=np.trace(np.dot(np.abs(PPinitBasis),np.log(np.abs(PPinitBasis))))
     return EPinitBasis
 
+
 def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init,kickstrength,kickdirection,projectname):
     # Ground state stuff
     print(' *******           *******   ********** *******\n'+ 
@@ -618,7 +630,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     '//        //      //     //     //     //       \n'+
     '-------------------------------------------------------\n')
     print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\nWarren Lynch - WLynch@lincoln.ac.uk\n'+
-    'Date of last edit: 05/07/2023\n'+
+    'Date of last edit: 06/07/2023\n'+
     'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
     '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
     '\t     selected for benchmarking and testing. Comments on \n'+
@@ -630,6 +642,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     '- Sympy >=1.7.1\n'+
     '- Scipy >= 0.19\n'+
     '- PyLibXC\n'+
+    '- Numba >= 0.51.2\n'+
     '--------------------------------------------------------------------\n')
 
     print('Ground state calculations:\n')
@@ -722,7 +735,7 @@ nsteps=100
 timestep=0.1
 SCFiterations=100
 kickstrength=0.1
-kickdirection=[1,0,0]
+kickdirection=np.array([1,0,0])
 proptype='CFM4'
 projectname='CFM4run'
 
@@ -731,11 +744,11 @@ L=10.
 N_i=60
 
 # Molecule parameters
-alpha = [[0.3136497915, 1.158922999, 6.362421394],[0.1688554040, 0.6239137298, 3.425250914]] #alpha[0] for He, alpha[1] for H
-Coef = [0.4446345422, 0.5353281423, 0.1543289673] #Coefficients are the same for both He and H
-R_I = [np.array([0.,0.,0.]), np.array([0.,0.,1.4632])] #R_I[0] for He, R_I[1] for H.
+alpha = np.array([[0.3136497915, 1.158922999, 6.362421394],[0.1688554040, 0.6239137298, 3.425250914]]) #alpha[0] for He, alpha[1] for H
+Coef = np.array([0.4446345422, 0.5353281423, 0.1543289673]) #Coefficients are the same for both He and H
+R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])]) #R_I[0] for He, R_I[1] for H.
 Z_I = np.array([2.,1.])
-Cpp = [[-9.14737128,1.71197792],[-4.19596147,0.73049821]] #He, H
+Cpp = np.array([[-9.14737128,1.71197792],[-4.19596147,0.73049821]]) #He, H
 P_init=np.array([[1.333218,0.],[0.,0.666609]])
 
 t,energies,mu,timings,SE,vNE,EPinit=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_init,kickstrength,kickdirection,projectname)
@@ -756,7 +769,7 @@ plt.ylabel('Dipole moment, $\mu$')
 
 #%%
 # Absorption Spectrum plot
-filterpercentage=0
+filterpercentage=85
 mu=np.array(mu)
 c=299792458
 h=6.62607015e-34
@@ -771,3 +784,4 @@ plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
 #plt.xlim([0, 5e-7])
+# %%

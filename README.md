@@ -28,4 +28,4 @@ System requirements:
 - Sympy >=1.7.1
 - Scipy >= 0.19
 - PyLibXC
-
+- Numba >= 0.51.2
