@@ -16,5 +16,9 @@ authors:
     email: MWatkins@lincoln.ac.uk
     affiliation: University of Lincoln
     orcid: 'https://orcid.org/0000-0003-4215-684X'
+  - given-names: Warren
+    family-names: Lynch
+    email: WLynch@lincoln.ac.uk
+    affiliation: University of Lincoln
 repository-code: 'https://github.com/Matt-A-Thompson/PyRTP'
 license: GPL-3.0
