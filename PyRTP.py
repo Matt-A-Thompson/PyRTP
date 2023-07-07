@@ -10,7 +10,7 @@ from scipy.interpolate import lagrange
 import time
 import os
 import pylibxc
-from numba import jit
+from numba import jit,objmode
 
 # the number of threads can be specified by uncommenting one of the following functions,
 # run 'np.show_config()' to determine which to use.
@@ -110,6 +110,7 @@ def grid_integration(V_r,dr,phi):
 
     return V
 
+@jit(nopython=True,cache=True)
 def energy_calculation(V,P): 
     return np.sum(P*V)
 
@@ -121,8 +122,8 @@ def calculate_overlap(N,N_i,dr,phi):
 
     return S
 
+@jit(nopython=True,cache=True)
 def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L) :
-    # Deffo numba here
     delta_T = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
 
     for i in range(0,N_i) :
@@ -132,14 +133,16 @@ def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L) :
                 g = np.array([G_u[i],G_v[j],G_w[k]])
                 for I in range(0,len(phi)) :
                     for J in range(0,len(phi)) :
-                        delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
+                        with objmode():
+                            delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
 
     return delta_T
 
+@jit(nopython=True,cache=True)
 def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L) :
-    # Numba here
-    nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
-    Vg = np.complex128(np.zeros(N).reshape(N_i,N_i,N_i))
+    with objmode(nG='complex128[:,:,:]'):
+        nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
+    Vg = np.zeros(N).reshape(N_i,N_i,N_i).astype(np.complex128)
     E_hart_G = 0. ## Hartree energy in reciprocal space
     
     for i in range(0,N_i) :
@@ -155,9 +158,11 @@ def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L) :
                 E_hart_G += np.conjugate(nG[i][j][k])*Vg[i][j][k] 
                 
     E_hart_G *= L**3/N**2*0.5
-    
-    return np.fft.ifftshift(Vg), E_hart_G #result is shifted back. 
+    with objmode(Vout='complex128[:,:,:]'):
+        Vout=np.fft.ifftshift(Vg)
+    return Vout, E_hart_G #result is shifted back. 
 
+@jit(nopython=True,cache=True)
 def calculate_hartree_real(V_r,n_r,dr) :
                 
     return 0.5*np.sum(V_r*n_r)*dr
@@ -769,7 +774,7 @@ plt.ylabel('Dipole moment, $\mu$')
 
 #%%
 # Absorption Spectrum plot
-filterpercentage=85
+filterpercentage=0
 mu=np.array(mu)
 c=299792458
 h=6.62607015e-34
