@@ -140,6 +140,7 @@ def grid_integration(V_r,dr,phi,functioncalls,gridintegrationtimes):
     gridintegrationtimes=np.append(gridintegrationtimes,et-st)
     return V,functioncalls,gridintegrationtimes
 
+@jit(nopython=True,cache=True)
 def energy_calculation(V,P,functioncalls,energycalculationtimes): 
     with objmode(st='f8'):
         st=time.time()
@@ -166,6 +167,7 @@ def calculate_overlap(N,N_i,dr,phi,functioncalls,calculateoverlaptimes,gridinteg
     #print(gridintegrationtimes)
     return S,functioncalls,calculateoverlaptimes,gridintegrationtimes
 
+@jit(nopython=True,cache=True)
 def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,calculatekineticderivativetimes) :
     with objmode(st='f8'):
         st=time.time()
@@ -177,19 +179,21 @@ def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,
 
                 g = np.array([G_u[i],G_v[j],G_w[k]])
                 for I in range(0,len(phi)) :
-                    for J in range(0,len(phi)) :
-                        delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
+                    for J in range(0,len(phi)):
+                        with objmode():
+                            delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
     with objmode(et='f8'):
          et=time.time()
     functioncalls[8]+=1
     calculatekineticderivativetimes=np.append(calculatekineticderivativetimes,et-st)
     return delta_T,functioncalls,calculatekineticderivativetimes
 
+@jit(nopython=True,cache=True)
 def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncalls,calculatehartreereciprocaltimes):
-    with objmode(st='f8'):
+    with objmode(st='f8',nG='complex128[:,:,:]'):
         st=time.time()
-    nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
-    Vg = np.complex128(np.zeros(N).reshape(N_i,N_i,N_i))
+        nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
+    Vg = np.zeros(N).reshape(N_i,N_i,N_i).astype(np.complex128)
     E_hart_G = 0. ## Hartree energy in reciprocal space
     
     for i in range(0,N_i) :
@@ -205,12 +209,14 @@ def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncal
                 E_hart_G += np.conjugate(nG[i][j][k])*Vg[i][j][k] 
                 
     E_hart_G *= L**3/N**2*0.5
-    with objmode(et='f8'):
+    with objmode(et='f8',Vout='complex128[:,:,:]'):
+         Vout=np.fft.ifftshift(Vg)
          et=time.time()
     functioncalls[9]+=1
     calculatehartreereciprocaltimes=np.append(calculatehartreereciprocaltimes,et-st)
-    return np.fft.ifftshift(Vg), E_hart_G,functioncalls,calculatehartreereciprocaltimes #result is shifted back. 
+    return Vout, E_hart_G,functioncalls,calculatehartreereciprocaltimes #result is shifted back. 
 
+@jit(nopython=True,cache=True)
 def calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes) :
     with objmode(st='f8'):
         st=time.time()
