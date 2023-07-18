@@ -1,17 +1,23 @@
 #%%
+# Comments correct as 18/7/2023
+# Commented by MT
+# The purpose of these comments is to give an overview of the programming decisions, not the underlying physics.
+# A Jupyter Notebook version of this program is available via [insert service here], which gives a short introduction
+# to the physics underpinning the RT-TDDFT method.
+
 #Package imports
-import numpy as np
+import math # For general math operations
+import numpy as np # For fast math operations using BLAS (i.e. sums, means, etc.)
+import scipy # For general purpose maths, which sometimes works better than Numpy (FFTs specifically)
+from scipy.interpolate import lagrange # Specifically importing the lagrange function to save space later on in the program
+from sympy import Matrix # For general matrix manipulation (diagonalisation, etc). Numpy may work better for these operations, and may be a future change
+import pylibxc # Python interpretter for the LibXC exchange-correlation potentials library
+import os # Mostly used to create files and directories
 from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
-import math
-import scipy
-import matplotlib.pyplot as plt
-from sympy import Matrix
-from scipy.interpolate import lagrange
-import time
-import os
-import pylibxc
-from numba import jit,objmode
-import re
+import matplotlib.pyplot as plt # Used for post-processing of data
+import time # Used to check run times of certain functions
+from numba import jit,objmode # Translates Python script into machine code for significantly faster runtimes
+import re # Used to read and format .txt and .dat files (reading basis set libraries, etc.)
 
 # the number of threads can be specified by uncommenting one of the following functions,
 # run 'np.show_config()' to determine which to use.
@@ -22,7 +28,12 @@ import re
 
 #%%
 # FunctionCalls
+# This section includes all the functions required to perform DFT and RT-TDDFT. The @jit tags instruct Numba to convert
+# these functions into machine code, and are cached, so that repeated runs do not have to do this translation on every run.
 def GridCreate(L,N_i,functioncalls,GridCreatetimes):
+    # This function takes the length of the grid and the number of points per side (N_i) and forms a 3-dimensional 'box' of
+    # grid points. This function does not have the @jit tag, as Numba does not support the 'np.linspace' command natively.
+    # This command also returns the total number of points and the grid spacing 'dr'.
     with objmode(st='f8'):
          st=time.time()
     N = N_i**3
@@ -36,14 +47,19 @@ def GridCreate(L,N_i,functioncalls,GridCreatetimes):
     GridCreatetimes=np.append(GridCreatetimes,et-st)
     return r_x,r_y,r_z,N,dr,functioncalls,GridCreatetimes
 
-#a_GTO = exponent, r_GTO = grid position vector, R_GTO = nuclei position vector
 @jit(nopython=True,cache=True)
-def GTO(a_GTO,r_GTO,R_GTO): 
+def GTO(a_GTO,r_GTO,R_GTO):
+    # This function evaluates a Gaussian-type orbital evaluated on the grid from user defined coefficients and exponents, 
+    # such that a_GTO = exponent, r_GTO = grid position vector and R_GTO = nuclei position vector. 
     GTOcalc=(2*a_GTO/np.pi)**(3/4)*np.exp(-a_GTO*(np.linalg.norm(r_GTO - R_GTO))**2)
     return GTOcalc
 
 @jit(nopython=True,cache=True)
-def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,Alpha,functioncalls,constructGTOstimes) :
+def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,Alpha,functioncalls,constructGTOstimes):
+    # This function evaluates the Gaussian-type orbitals for a selected molecule at each point of the grid
+    # and saves it to an array. In this case, as the orbital approximation being used is STO-3G, the array
+    # has dimensions {3 x N_i x N_i x N_i}, as this approximation uses 3 Gaussian functions per orbital.
+
     with objmode(st='f8'):
         st=time.time()
     #create a matrix of grid points for each of the three GTOs, initialised to zero.
@@ -65,7 +81,8 @@ def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,Alpha,functioncalls,constructGTOsti
     return GTO_p,functioncalls,constructGTOstimes
 
 @jit(nopython=True,cache=True)
-def construct_CGF(GTOs,N,N_i,Coef,functioncalls,constructCGFtimes) :
+def construct_CGF(GTOs,N,N_i,Coef,functioncalls,constructCGFtimes):
+    # This function evaluates the STO-3G approximation at each grid point.
     with objmode(st='f8'):
         st=time.time()
     CGF = np.zeros(N).reshape(N_i,N_i,N_i) #create a matrix of grid points initialised to zero.
@@ -77,9 +94,11 @@ def construct_CGF(GTOs,N,N_i,Coef,functioncalls,constructCGFtimes) :
     constructCGFtimes=np.append(constructCGFtimes,et-st)
     return CGF,functioncalls,constructCGFtimes
 
-def CP2K_basis_set_data(filename,element,basis_set,functioncalls,basissettimes) :
+def CP2K_basis_set_data(filename,element,basis_set,functioncalls,basissettimes):
+    # This function reads the selected basis set file within the CP2K data folder. In future, depending on licensing, we may be able to include a copy of the 'BASIS_MOLOPT' file, 
+    # or read all of the data in the file and convert it into a .npy file.
     st=time.time()
-    data_path = os.environ.get('CP2K_DATA')
+    data_path = './src/BasisSets' # This folder contains the basis set .txt files
     check = 0
     get_key = 0
     key = np.array([])
@@ -89,7 +108,7 @@ def CP2K_basis_set_data(filename,element,basis_set,functioncalls,basissettimes) 
     coef = np.array([])
     coef_temp = np.array([])
 
-    with open(data_path+'/'+filename) as fin :
+    with open(data_path+'/'+filename) as fin : # This sections loops over all lines and extracts the data required for the specified element
         for line in fin :
             if check == 1 :
                 if line  == (' 1\n') :
@@ -119,7 +138,8 @@ def CP2K_basis_set_data(filename,element,basis_set,functioncalls,basissettimes) 
                 print(line)
                 check = 1
 
-    coef = coef.T
+    # Formatting data into useable Python variables
+    coef = coef.T   
     if key[2] > 0. : coef = coef.reshape(int(key[2]),int(coef_range/key[2]),int(key[3])) #l,function,data                                                                                                                                            
     else : coef = coef.reshape(1,int(coef_range),int(key[3]))
 
@@ -137,6 +157,7 @@ def CP2K_basis_set_data(filename,element,basis_set,functioncalls,basissettimes) 
 
 @jit(nopython=True,cache=True)
 def calculate_realspace_density(phi,N,N_i,P,dr,functioncalls,calculaterealspacedensitytimes) :
+    # This function determines the electron charge density at each grid point, along with a total electron charge density.
     with objmode(st='f8'):
         st=time.time()
     n_el_r = np.zeros(N).reshape(N_i,N_i,N_i)
@@ -154,9 +175,14 @@ def calculate_realspace_density(phi,N,N_i,P,dr,functioncalls,calculaterealspaced
 
 @jit(nopython=True,cache=True)
 def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,calculatecoredensitytimes) :
+    # This function determines the nuclear charge density at each grid point.
     with objmode(st='f8'):
         st=time.time()
-    R_pp = np.sqrt(2.)/5.
+    R_pp = np.sqrt(2.)/5. # This is a pseudopotential parameter, which is preset for each molecule.
+
+    # It is worth mentioning at this point that this code is designed around simulating the HeH+ molecule. 
+    # Further work is required to add the capability to simulate other molecules, which will have different
+    # pseudopotential parameters.
 
     n_c_r = np.zeros(N).reshape(N_i,N_i,N_i)
 
@@ -176,6 +202,8 @@ def calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,calculatecore
 
 @jit(nopython=True,cache=True)
 def grid_integration(V_r,dr,phi,functioncalls,gridintegrationtimes):
+    # This function integrates an arbitrary potential over all points of the grid, giving a potential matrix in the
+    # correct basis, which is more compact.
     with objmode(st='f8'):
         st=time.time()
     V = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
@@ -193,6 +221,7 @@ def grid_integration(V_r,dr,phi,functioncalls,gridintegrationtimes):
 
 @jit(nopython=True,cache=True)
 def energy_calculation(V,P,functioncalls,energycalculationtimes): 
+    # This function evaluates a potential in the correct basis and determines the corresponding energy contribution. 
     with objmode(st='f8'):
         st=time.time()
     E=np.sum(P*V)
@@ -204,6 +233,10 @@ def energy_calculation(V,P,functioncalls,energycalculationtimes):
 
 @jit(nopython=True,cache=True)
 def calculate_overlap(N,N_i,dr,phi,functioncalls,calculateoverlaptimes,gridintegrationtimes):
+    # This function evaluates the overlap between atomic orbitals. It is worth noting that this function is simplified using
+    # the grid integration function, as if the arbitrary potential being evaluated is equal to 1 at all points, the equations
+    # to calculate the potential and the overlap are equivalent. Of course, this could be done explicitly in this function,
+    # however it is more compact to do it this way.
     with objmode(st='f8'):
         st=time.time()
     V_temp = np.ones(N).reshape(N_i,N_i,N_i)
@@ -216,6 +249,9 @@ def calculate_overlap(N,N_i,dr,phi,functioncalls,calculateoverlaptimes,gridinteg
 
 @jit(nopython=True,cache=True)
 def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,calculatekineticderivativetimes) :
+    # This function calculates the derivative of the kinetic energy by looping over all points of the reciprocal space grid.
+    # 'with objmode()' is used to escape from the machine code to perform functions not available in Numba, with np.matmul being
+    # somewhat awkward to use.
     with objmode(st='f8'):
         st=time.time()
     delta_T = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
@@ -237,20 +273,23 @@ def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,
 
 @jit(nopython=True,cache=True)
 def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncalls,calculatehartreereciprocaltimes):
+    # This function calculates the Hartree potential and energy in reciprocal space.
     with objmode(st='f8',nG='complex128[:,:,:]'):
         st=time.time()
         nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
-    Vg = np.zeros(N).reshape(N_i,N_i,N_i).astype(np.complex128)
+    Vg = np.zeros(N).reshape(N_i,N_i,N_i).astype(np.complex128)     # Arrays here are of type 'np.complex128', however we 
+                                                                    # eventually ignore all non-real parts.
+
     E_hart_G = 0. ## Hartree energy in reciprocal space
     
     for i in range(0,N_i) :
         for j in range(0,N_i) :
             for k in range(0,N_i) :
 
-                R_vec = np.array([r_x[i],r_y[j],r_z[k]])
-                G_vec = np.array([G_u[i],G_v[j],G_w[k]])
+                R_vec = np.array([r_x[i],r_y[j],r_z[k]]) # position vector in real space
+                G_vec = np.array([G_u[i],G_v[j],G_w[k]]) # position vector in reciprocal space
 
-                if np.dot(G_vec,G_vec) < 0.01 :  continue #can't divide by zero
+                if np.dot(G_vec,G_vec) < 0.01 :  continue # Prevents a division by zero
 
                 Vg[i][j][k] = 4*np.pi*nG[i][j][k]/np.dot(G_vec,G_vec)
                 E_hart_G += np.conjugate(nG[i][j][k])*Vg[i][j][k] 
@@ -275,6 +314,9 @@ def calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes) :
     return Har,functioncalls,calculatehartreerealtimes
 
 def calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes):
+    # This function uses the LibXC library to evaluate the exchange-correlation potential and energy 
+    # over the entire grid. This requires the electron charge density to function. The XC functional
+    # currently being used is 'LDA_XC_TETER93', which mimics the XC functional used in CP2K.
     with objmode(st='f8'):
         st=time.time()
     func=pylibxc.LibXCFunctional('LDA_XC_TETER93','unpolarized')
@@ -294,6 +336,7 @@ def calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes):
 
 @jit(nopython=True,cache=True)
 def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtimes) :
+    # This function calculates the short range pseudopotential, again by looping over all grid points.
     with objmode(st='f8'):
         st=time.time()
     V_SR_r = np.zeros(N).reshape(N_i,N_i,N_i)
@@ -316,6 +359,7 @@ def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtim
 
 @jit(nopython=True,cache=True)
 def calculate_self_energy(Z_I,functioncalls,calculateselfenergytimes) :
+    # This function calculates the self energy correction term of the total energy, which is relatively simple.
     with objmode(st='f8'):
         st=time.time()
     R_pp = np.sqrt(2.)/5. #R_{I}^{c}
@@ -328,6 +372,7 @@ def calculate_self_energy(Z_I,functioncalls,calculateselfenergytimes) :
 
 @jit(nopython=True,cache=True)
 def calculate_Ion_interaction(Z_I,R_I,functioncalls,calculateIItimes) :
+    # This function calculates the energy from the interation between ions. 
     with objmode(st='f8'):
         st=time.time()
     R_pp = np.sqrt(2.)/5. #R_{I}^{c}
@@ -340,6 +385,10 @@ def calculate_Ion_interaction(Z_I,R_I,functioncalls,calculateIItimes) :
     return E_II,functioncalls,calculateIItimes
 
 def dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes):
+    # This function calls all functions required to perform DFT that do not change during the SCF cycle.
+    # This prevents the functions being called unneccessarily. This function should be called prior to the 
+    # 'computeDFT' function.
+
     with objmode(st='f8'):
         st=time.time()
     r_x,r_y,r_z,N,dr,functioncalls,GridCreatetimes=GridCreate(L,N_i,functioncalls,GridCreatetimes)
@@ -368,6 +417,7 @@ def dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTO
 
 
 def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times):
+    # This function returns the total energy for a given density matrix P.
     with objmode(st='f8'):
         st=time.time()
     n_el_r, n_el_r_tot,functioncalls,calculaterealspacedensitytimes  = calculate_realspace_density(phi,N,N_i,P,dr,functioncalls,calculaterealspacedensitytimes)
@@ -392,6 +442,8 @@ def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta
     return E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times
 
 def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes):
+    # This function performs conventional ground-state DFT to produce a converged ground state electron density, wavefunction, energy and Kohn-Sham orbitals.
+    # The 'DFTsetup' function must be called prior to calling this function.
     with objmode(st='f8'):
         st=time.time()
     P = P_init
@@ -439,9 +491,9 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
         KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
         C_temp, e = KS_temp.diagonalize()
         C = np.matmul(X,C_temp)
-        print("iteration : ", I+1, "\n")
-        print("total energy : ", np.real(E_0), "\n")
-        print("density matrix : ","\n", P, "\n")
+        print("iteration : ", I+1, "\n")               # This outputs various information for the user to monitor
+        print("total energy : ", np.real(E_0), "\n")   # the convergence of the SCF cycle. These may be commented out
+        print("density matrix : ","\n", P, "\n")       # if required.
         print("KS matrix : ","\n", KS, "\n")
         P_new=np.zeros_like(P_init)
         for u in range(0,2):
@@ -464,8 +516,12 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
 def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,functioncalls,GaussianKicktimes,tdttimes,gridintegrationtimes):
     with objmode(st='f8'):
         st=time.time()
-    t0=1
-    w=0.2
+
+    t0=1 # These parameters, representing the pulse center and width
+    w=0.2 # were selected to be ideal for most systems.
+             # In future, it is possible that the user could be given some
+             # control over these parameters.
+
     Efield=np.dot(scale*np.exp((-(t-t0)**2)/(2*(w**2))),direction)
     D_x,D_y,D_z,D_tot,functioncalls,tdttimes,gridintegrationtimes=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,tdttimes,gridintegrationtimes)
     V_app=-(np.dot(D_x,Efield[0])+np.dot(D_y,Efield[1])+np.dot(D_z,Efield[2]))
@@ -476,7 +532,9 @@ def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,functioncalls,GaussianK
     GaussianKicktimes=np.append(GaussianKicktimes,et-st)
     return KS_new,functioncalls,GaussianKicktimes,tdttimes,gridintegrationtimes
 
-# Propagator - using predictor-corrector regime (if applicable)
+# Propagator - this function selects the equation to determine the unitary operator to propagate 
+# the system forward in time a singular timestep, using predictor-corrector regime (if applicable)
+# This function uses a match-case statement, hence the need for Python 3.10 or greater.
 def propagator(select,H1,H2,dt,functioncalls,propagatortimes): #propagator functions
     with objmode(st='f8'):
         st=time.time()
@@ -504,21 +562,25 @@ def propagator(select,H1,H2,dt,functioncalls,propagatortimes): #propagator funct
     return U,functioncalls,propagatortimes
 
 def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times):
+    # This function performs the propagation to determine the new density matrix at the next timestep, depending on the propagator selected.
     match select:
         case 'CN':
+            # The Crank-Nicholson propagator uses a predictor-corrector algorithm to ensure the propagation is accurate.
             with objmode(st='f8'):
                 st=time.time()
-            # predictor step first
+            # This is the predicting section
             if i==0:
                 H_p=H
             elif i>0 and i<5:
-                H_p,functioncalls,LagrangeExtrapolatetimes=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2),functioncalls,LagrangeExtrapolatetimes) 
-            else:
-                H_p,functioncalls,LagrangeExtrapolatetimes=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2),functioncalls,LagrangeExtrapolatetimes)   
-            U,functioncalls,propagatortimes=propagator(select,H_p,[],dt,functioncalls,propagatortimes)
+                H_p,functioncalls,LagrangeExtrapolatetimes=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2),functioncalls,LagrangeExtrapolatetimes)  # LagrangeExtrapolate fits a curve to the previous set of energies
+                                                                                                                                                          # and extrapolates based on that. It is important that the number of
+            else:                                                                                                                                         # points be limited so as not to cause instability.
+                H_p,functioncalls,LagrangeExtrapolatetimes=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2),functioncalls,LagrangeExtrapolatetimes)  
+
+            U,functioncalls,propagatortimes=propagator(select,H_p,[],dt,functioncalls,propagatortimes) # calling the propagtor function to determine the unitary operator U.
             U=np.real(U)
             C_p=np.dot(U,C)
-            # update
+            # This is the updating section
             P_p=np.zeros_like(P)
             for u in range(0,len(P_p)):
                 for v in range(0,len(P_p)) :
@@ -526,9 +588,9 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
             E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
-            # correct
+            # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
-            U,functioncalls,propagatortimes=propagator(select,H_c,[],dt,functioncalls,propagatortimes)
+            U,functioncalls,propagatortimes=propagator(select,H_c,[],dt,functioncalls,propagatortimes) # After the predictor-corrector regime, the unitary operator U is likely more accurate.
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -540,9 +602,10 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             with objmode(et='f8'):
                 et=time.time()
         case 'EM':
+            # The Exponential Midpoint propagator uses a predictor-corrector algorithm to ensure the propagation is accurate.
             with objmode(st='f8'):
                 st=time.time()
-            # predictor step first
+            # This is the predicting section
             if i==0:
                 H_p=H
             elif i>0 and i<5:
@@ -552,7 +615,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             U,functioncalls,propagatortimes=propagator(select,H_p,[],dt,functioncalls,propagatortimes)
             U=np.real(U)
             C_p=np.dot(U,C)
-            # update
+            # This is the updating section
             P_p=np.zeros_like(P)
             for u in range(0,len(P_p)):
                 for v in range(0,len(P_p)) :
@@ -560,6 +623,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
             E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,propagatortimes=propagator(select,H_c,[],dt,functioncalls,propagatortimes)
             U=np.real(U)
@@ -573,8 +637,12 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             with objmode(et='f8'):
                 et=time.time()
         case 'ETRS':
+            # The ETRS propagator requires an approximation of the energy at the next timestep. As such,
+            # the EM propagator is used first to determine the energy at the next timestep, then the ETRS
+            # propagator is used to ensure the density matrix is accurate and time-reversal symmetry is enforced.
             with objmode(st='f8'):
                 st=time.time()
+            # This is the predicting section of the EM propagator
             if i==0:
                 H_p=H
             elif i>0 and i<5:
@@ -584,7 +652,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             U,functioncalls,propagatortimes=propagator('EM',H_p,[],dt,functioncalls,propagatortimes)
             U=np.real(U)
             C_p=np.dot(U,C)
-            # update
+            # This is the updating section of the EM propagator
             P_p=np.zeros_like(P)
             for u in range(0,len(P_p)):
                 for v in range(0,len(P_p)) :
@@ -592,6 +660,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
             E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            # This is the correcting section of the EM propagator
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,propagatortimes=propagator('EM',H_c,[],dt,functioncalls,propagatortimes)
             U=np.real(U)
@@ -602,7 +671,10 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,len(P_new)-1) :
                         P_new[u][v] += C_new[u][p]*C_new[v][p]
                     P_new[u][v] *=2
+            # As the EM propagator has determined a good approximate of the density matrix at the next timestep,
+            # the 'computeE_0' function can be called to determine the energy at the next timestep.
             Hdt,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            # The ETRS propagator can now be called
             U,functioncalls,propagatortimes=propagator(select,H,Hdt,dt,functioncalls,propagatortimes)
             U=np.real(U)
             C_new=np.dot(U,C)
@@ -615,6 +687,8 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             with objmode(et='f8'):
                 et=time.time()
         case 'AETRS':
+            # The AETRS propagator uses a similar mechanism to the ETRS propagator, except rather than using the EM
+            # propagator to predict the new density matrix (and thus energy), Lagrange Extrapolation is used.
             with objmode(st='f8'):
                 st=time.time()
             if i<5:
@@ -633,12 +707,17 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             with objmode(et='f8'):
                 et=time.time()
         case 'CAETRS':
+            # The CAETRS propagator works much in the same way as the AETRS propagator, with the inclusion of a
+            # predictor-corrector algorithm to ensure accuracy, whilst still being significantly more efficient 
+            # than the ETRS propagator.
             with objmode(st='f8'):
                 st=time.time()    
+            # This is the predicting section
             if i<5:
                 Hdt,functioncalls,LagrangeExtrapolatetimes=LagrangeExtrapolate(t[0:i],energies[0:i],tnew,functioncalls,LagrangeExtrapolatetimes) 
             else:
                 Hdt,functioncalls,LagrangeExtrapolatetimes=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew,functioncalls,LagrangeExtrapolatetimes) 
+            # This is the updating section
             U,functioncalls,propagatortimes=propagator(select,H,Hdt,dt,functioncalls,propagatortimes)
             U=np.real(U)
             C_p=np.dot(U,C)
@@ -649,6 +728,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
             E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             Hdt=2*H_c-Hprev
             U,functioncalls,propagatortimes=propagator(select,H_c,Hdt,dt,functioncalls,propagatortimes)
@@ -663,6 +743,8 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
             with objmode(et='f8'):
                 et=time.time()
         case 'CFM4':
+            # The commutator-free 4th order Magnus propagator uses 2 approximations of energies at future times to
+            # provide an accurate and efficient approximation of the unitary operator. This method is preferred.
             with objmode(st='f8'):
                 st=time.time()
             if i<5:
@@ -691,6 +773,8 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
 
 @jit(nopython=True,cache=True)
 def transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,tdttimes,gridintegrationtimes) :
+    # This function determines the transition dipole tensor in the x, y and z directions.
+    # This is used for calculation of the Gaussian pulse and the dipole moment.
     with objmode(st='f8'):
         st=time.time()
     D_x,functioncalls,gridintegrationtimes = grid_integration(r_x,dr,phi,functioncalls,gridintegrationtimes)             
@@ -705,6 +789,7 @@ def transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,tdttim
     return D_x,D_y,D_z,D_tot,functioncalls,tdttimes,gridintegrationtimes
 
 def GetP(KS,S,functioncalls,getptimes):
+    # This function determines the density matrix for a given Kohn-Sham matrix.
     with objmode(st='f8'):
         st=time.time()
     S=Matrix(S)
@@ -728,6 +813,7 @@ def GetP(KS,S,functioncalls,getptimes):
     return P_new,functioncalls,getptimes
 
 def LagrangeExtrapolate(t,H,tnew,functioncalls,LagrangeExtrapolatetimes):
+    # This function performs Lagrange extrapolation (see Scipy documentation for details).
     with objmode(st='f8'):
         st=time.time()
     f=lagrange(t,H)
@@ -740,6 +826,7 @@ def LagrangeExtrapolate(t,H,tnew,functioncalls,LagrangeExtrapolatetimes):
 
 @jit(nopython=True,cache=True)
 def pop_analysis(P,S,functioncalls,popanalysistimes) :
+    # This function provides Mulliken population analysis for HeH+, however this function will break for larger molecules.
     with objmode(st='f8'):
         st=time.time()
     PS = np.matmul(P,S)
@@ -753,11 +840,12 @@ def pop_analysis(P,S,functioncalls,popanalysistimes) :
     return pop_total, pop_He, pop_H,functioncalls,popanalysistimes
 
 def ShannonEntropy(P,functioncalls,SEtimes):
+    # This function determines the Shannon entropy, which has a variety of quantum chemistry uses.
     with objmode(st='f8'):
         st=time.time()
     P_eigvals=np.linalg.eigvals(P)
-    P_eigvals_corrected=[x for x in P_eigvals if x>0.00001]
-    P_eigvecbasis=np.diag(P_eigvals_corrected)
+    P_eigvals_corrected=[x for x in P_eigvals if x>0.00001] # The eigenvalues are tidied to remove small values, as
+    P_eigvecbasis=np.diag(P_eigvals_corrected)              # computing the natural log of small values gives inf.
     SE=np.trace(np.dot(P_eigvecbasis,np.log(P_eigvecbasis)))
     with objmode(et='f8'):
          et=time.time()
@@ -766,6 +854,7 @@ def ShannonEntropy(P,functioncalls,SEtimes):
     return SE,functioncalls,SEtimes
 
 def vonNeumannEntropy(P,functioncalls,vNEtimes):
+    # This function determines the von Neumann entropy, which represents the 'distance' from a pure state in this program.
     with objmode(st='f8'):
         st=time.time()
     vNE=np.trace(np.dot(P,np.log(P)))
@@ -776,6 +865,7 @@ def vonNeumannEntropy(P,functioncalls,vNEtimes):
     return vNE,functioncalls,vNEtimes
 
 def EntropyPInitBasis(P,Pini,functioncalls,PgsEtimes):
+    # This function produces an entropy-like measure based on the initial density matrix.
     with objmode(st='f8'):
         st=time.time()
     PPinitBasis=np.matmul(np.linalg.inv(Pini),np.matmul(P,Pini))
@@ -801,11 +891,10 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     '//        //      //     //     //     //       \n'+
     '-------------------------------------------------------\n')
     print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\nWarren Lynch - WLynch@lincoln.ac.uk\n'+
-    'Date of last edit: 06/07/2023\n'+
+    'Date of last edit: 18/07/2023\n'+
     'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
     '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
-    '\t     selected for benchmarking and testing. Comments on \n'+
-    '\t     the approaches used are in progress.\n'+
+    '\t     selected for benchmarking and testing.\n'+
     '\n'+'System requirements:\n'+
     '- Python >= 3.10\n'+
     '- Numpy >= 1.13\n'+
@@ -817,6 +906,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     '--------------------------------------------------------------------\n')
 
     print('Ground state calculations:\n')
+    # Initialising the arrays containing the runtimes of each function
     GridCreatetimes=np.array([])
     constructGTOstimes=np.array([])
     constructCGFtimes=np.array([])
@@ -847,8 +937,8 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     vNEtimes=np.array([])
     PgsEtimes=np.array([])
     RTTDDFTtimes=np.array([])
-
     functioncalls=np.zeros((30,),dtype=int)
+
     # Performing calculation of all constant variables to remove the need to repeat it multiple times.
     r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes=dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes)
 
@@ -862,7 +952,8 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,P_in
     SE=[]
     vNE=[]
     EPinit=[]
-    # Writing a short .txt file giving the simulation parameters to the project folder
+    # Writing a short .txt file giving the simulation parameters to the project folder.
+    # This will fail if the directory already exists, as intended, to prevent data loss.
     os.mkdir(os.path.join(os.getcwd(),projectname))
     lines = ['PyRTP run parameters','------------------------','Propagator: '+propagator,'Timesteps: '+str(nsteps),'Timestep: '+str(dt),'Kick strength: '+str(kickstrength),'Kick direction: '+str(kickdirection)]
     with open(projectname+'/'+projectname+'_parameters.txt', 'w') as f:
@@ -1005,7 +1096,7 @@ print(''.ljust(73,'-'))
 print('| '+'GridCreate'.ljust(30)+'|'+str(functioncalls[0]).center(19)+'|'+ str(np.round(np.mean(GridCreatetimes),13)).center(19)+'|')
 print('| '+'construct_GTOs'.ljust(30)+'|'+str(functioncalls[1]).center(19)+'|'+ str(np.round(np.mean(constructGTOstimes),13)).center(19)+'|')
 print('| '+'construct_CGF'.ljust(30)+'|'+str(functioncalls[2]).center(19)+'|'+ str(np.round(np.mean(constructCGFtimes),13)).center(19)+'|')
-print('| '+'CP2K_basis_set_data'.ljust(30)+'|'+str(functioncalls[3]).center(19)+'|'+ str(np.round(np.mean(basissettimes),13)).center(19)+'|')
+#print('| '+'CP2K_basis_set_data'.ljust(30)+'|'+str(functioncalls[3]).center(19)+'|'+ str(np.round(np.mean(basissettimes),13)).center(19)+'|')
 print('| '+'calculate_realspace_density'.ljust(30)+'|'+str(functioncalls[4]).center(19)+'|'+ str(np.round(np.mean(calculaterealspacedensitytimes),13)).center(19)+'|')
 print('| '+'calculate_core_density'.ljust(30)+'|'+str(functioncalls[5]).center(19)+'|'+ str(np.round(np.mean(calculatecoredensitytimes),13)).center(19)+'|')
 print('| '+'grid_integration'.ljust(30)+'|'+str(functioncalls[6]).center(19)+'|'+ str(np.round(np.mean(gridintegrationtimes),13)).center(19)+'|')
@@ -1033,8 +1124,5 @@ print('| '+'vonNeumannEntropy'.ljust(30)+'|'+str(functioncalls[27]).center(19)+'
 print('| '+'EntropyPInitBasis'.ljust(30)+'|'+str(functioncalls[28]).center(19)+'|'+ str(np.round(np.mean(PgsEtimes),13)).center(19)+'|')
 print('| '+'rttddft'.ljust(30)+'|'+str(functioncalls[29]).center(19)+'|'+ str(np.round(np.mean(RTTDDFTtimes),13)).center(19)+'|')
 print(''.ljust(73,'-'))
-     # '| Function            | Function calls    | Average run time        |\n'+
-     # '---------------------------------------------------------------------\n'+
-     # '| GridCreate          | '+str(functioncalls[0]).ljust(20,' ')+'    | '+str(np.mean(GridCreatetimes))+'    |')
 
 # %%
