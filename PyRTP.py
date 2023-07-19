@@ -350,7 +350,6 @@ def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,calcul
                 for n in range(0,len(Z_I)) : #loop over nuclei
                     r = np.linalg.norm(R_vec - R_I[n])
                     for c in range(0,len(Cpp)) : #loop over values of Cpp
-                        with objmode():
                             V_SR_r[i][j][k] += Cpp[n][c]*(np.sqrt(2.)*alpha_PP[n]*r)**(2*(c+1)-2)*np.exp(-(alpha_PP[n]*r)**2) 
 
     with objmode(et='f8'):
