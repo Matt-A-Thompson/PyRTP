@@ -313,6 +313,7 @@ def calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes) :
     calculatehartreerealtimes=np.append(calculatehartreerealtimes,et-st)
     return Har,functioncalls,calculatehartreerealtimes
 
+
 def calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes):
     # This function uses the LibXC library to evaluate the exchange-correlation potential and energy 
     # over the entire grid. This requires the electron charge density to function. The XC functional
@@ -334,13 +335,13 @@ def calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes):
     calculateXCtimes=np.append(calculateXCtimes,et-st)
     return V_XC_r, E_XC,functioncalls,calculateXCtimes
 
+
 @jit(nopython=True,cache=True)
-def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtimes) :
+def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,calculateVSRtimes) :
     # This function calculates the short range pseudopotential, again by looping over all grid points.
     with objmode(st='f8'):
         st=time.time()
     V_SR_r = np.zeros(N).reshape(N_i,N_i,N_i)
-    alpha_pp = 5./np.sqrt(2.) #pseudopotential parameter, alpha_pp = 1/R^{c}_{I}
     
     for i in range(0,len(V_SR_r)) :
         for j in range(0,len(V_SR_r)) :
@@ -349,7 +350,8 @@ def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtim
                 for n in range(0,len(Z_I)) : #loop over nuclei
                     r = np.linalg.norm(R_vec - R_I[n])
                     for c in range(0,len(Cpp)) : #loop over values of Cpp
-                        V_SR_r[i][j][k] += Cpp[n][c]*(np.sqrt(2.)*alpha_pp*r)**(2*(c+1)-2)*np.exp(-(alpha_pp*r)**2) 
+                        with objmode():
+                            V_SR_r[i][j][k] += Cpp[n][c]*(np.sqrt(2.)*alpha_PP[n]*r)**(2*(c+1)-2)*np.exp(-(alpha_PP[n]*r)**2) 
 
     with objmode(et='f8'):
          et=time.time()
@@ -358,11 +360,11 @@ def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtim
     return V_SR_r,functioncalls,calculateVSRtimes
 
 @jit(nopython=True,cache=True)
-def calculate_self_energy(Z_I,functioncalls,calculateselfenergytimes) :
+def calculate_self_energy(Z_I,alpha_PP,functioncalls,calculateselfenergytimes) :
     # This function calculates the self energy correction term of the total energy, which is relatively simple.
     with objmode(st='f8'):
         st=time.time()
-    R_pp = np.sqrt(2.)/5. #R_{I}^{c}
+    R_pp = 1/alpha_PP #R_{I}^{c}
     self=np.sum(-(2*np.pi)**(-1/2)*Z_I**2/R_pp)
     with objmode(et='f8'):
          et=time.time()
@@ -371,13 +373,19 @@ def calculate_self_energy(Z_I,functioncalls,calculateselfenergytimes) :
     return self,functioncalls,calculateselfenergytimes
 
 @jit(nopython=True,cache=True)
-def calculate_Ion_interaction(Z_I,R_I,functioncalls,calculateIItimes) :
+def calculate_Ion_interaction(Z_I,R_I,alpha_PP,functioncalls,calculateIItimes) :
     # This function calculates the energy from the interation between ions. 
     with objmode(st='f8'):
         st=time.time()
-    R_pp = np.sqrt(2.)/5. #R_{I}^{c}
-
-    E_II = Z_I[0]*Z_I[1]/np.linalg.norm(R_I[0]-R_I[1])*math.erfc(np.linalg.norm(R_I[0]-R_I[1])/np.sqrt(R_pp**2+R_pp**2))
+    E_II=0
+    R_pp = 1/alpha_PP #R_{I}^{c}
+    for i in range(0,len(Z_I)):
+        for j in range(0,len(Z_I)):
+            if i==j:
+                continue
+            else:
+                E_II += Z_I[i]*Z_I[j]/np.linalg.norm(R_I[i]-R_I[j])*math.erfc(np.linalg.norm(R_I[i]-R_I[j])/np.sqrt(R_pp[i]**2+R_pp[j]**2))
+    
     with objmode(et='f8'):
          et=time.time()
     functioncalls[15]+=1
@@ -422,7 +430,25 @@ def P_init_guess_calc(T,S,N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,calculatecored
     P_initguesstimes=np.append(P_initguesstimes,et-st)
     return P_init,functioncalls,calculatecoredensitytimes,calculatehartreereciprocaltimes,gridintegrationtimes,P_initguesstimes
 
-def dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes):
+def PP_coefs(Z_I,functioncalls,PP_coefstimes):
+    with objmode(st='f8'):
+        st=time.time()
+    cPP_lib=np.load('src/Pseudopotentials/Local/cPP.npy')
+    rPP_lib=np.load('src/Pseudopotentials/Local/rPP.npy')
+    cPP=[]
+    rPP=[]
+    for i in range(0,len(Z_I)):
+        cPP.append(cPP_lib[int(Z_I[i])-1])
+        rPP.append(rPP_lib[int(Z_I[i]-1)])
+
+    alpha_PP=1/(np.sqrt(2)*np.array(rPP))
+    with objmode(et='f8'):
+        et=time.time()
+    functioncalls[30]+=1
+    PP_coefstimes=np.append(PP_coefstimes,et-st)
+    return np.array(cPP).astype(np.float64),np.array(rPP).astype(np.float64),alpha_PP.astype(np.float64),functioncalls,PP_coefstimes
+
+def dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes,PP_coefstimes):
     # This function calls all functions required to perform DFT that do not change during the SCF cycle.
     # This prevents the functions being called unneccessarily. This function should be called prior to the 
     # 'computeDFT' function.
@@ -445,16 +471,18 @@ def dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTO
     phi_PW_G = np.array([PW_He_G,PW_H_G])
     S, functioncalls, calculateoverlaptimes, gridintegrationtimes = calculate_overlap(N,N_i,dr,phi,functioncalls,calculateoverlaptimes,gridintegrationtimes)
     delta_T,functioncalls,calculatekineticderivativetimes = calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,calculatekineticderivativetimes)
-    E_self,functioncalls,calculateselfenergytimes = calculate_self_energy(Z_I,functioncalls,calculateselfenergytimes)
-    E_II,functioncalls,calculateIItimes = calculate_Ion_interaction(Z_I,R_I,functioncalls,calculateIItimes)
+    cPP,rPP,alpha_PP,functioncalls,PP_coefstimes=PP_coefs(Z_I,functioncalls,PP_coefstimes)
+    print(cPP)
+    E_self,functioncalls,calculateselfenergytimes = calculate_self_energy(Z_I,alpha_PP,functioncalls,calculateselfenergytimes)
+    E_II,functioncalls,calculateIItimes = calculate_Ion_interaction(Z_I,R_I,alpha_PP,functioncalls,calculateIItimes)
     with objmode(et='f8'):
          et=time.time()
     functioncalls[16]+=1
     DFTsetuptimes=np.append(DFTsetuptimes,et-st)
-    return r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes
+    return r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,cPP,rPP,alpha_PP,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes,PP_coefstimes
 
 
-def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times):
+def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times):
     # This function returns the total energy for a given density matrix P.
     with objmode(st='f8'):
         st=time.time()
@@ -469,7 +497,7 @@ def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta
     E_hart_r,functioncalls,calculatehartreerealtimes = calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes)
     V_XC_r,E_XC,functioncalls,calculateXCtimes = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes)
     V_XC,functioncalls,gridintegrationtimes = grid_integration(V_XC_r,dr,phi,functioncalls,gridintegrationtimes)
-    V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtimes)
+    V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,calculateVSRtimes)
     V_SR,functioncalls,gridintegrationtimes = grid_integration(V_SR_r,dr,phi,functioncalls,gridintegrationtimes)
     E_SR,functioncalls,energycalculationtimes = energy_calculation(V_SR,P,functioncalls,energycalculationtimes)
     E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
@@ -479,7 +507,7 @@ def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta
     computeE0times=np.append(computeE0times,et-st)
     return E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times
 
-def computeDFT_first(R_I,alpha,Coef,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes,P_initguesstimes):
+def computeDFT_first(R_I,alpha,Coef,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes,P_initguesstimes):
     # This function performs conventional ground-state DFT to produce a converged ground state electron density, wavefunction, energy and Kohn-Sham orbitals.
     # The 'DFTsetup' function must be called prior to calling this function.
     with objmode(st='f8'):
@@ -497,7 +525,7 @@ def computeDFT_first(R_I,alpha,Coef,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GT
     E_hart_r,functioncalls,calculatehartreerealtimes = calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes)
     V_XC_r,E_XC,functioncalls,calculateXCtimes = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes)
     V_XC,functioncalls,gridintegrationtimes = grid_integration(V_XC_r,dr,phi,functioncalls,gridintegrationtimes)
-    V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtimes)
+    V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,calculateVSRtimes)
     V_SR,functioncalls,gridintegrationtimes = grid_integration(V_SR_r,dr,phi,functioncalls,gridintegrationtimes)
     E_SR,functioncalls,energycalculationtimes = energy_calculation(V_SR,P,functioncalls,energycalculationtimes)
     KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
@@ -521,7 +549,7 @@ def computeDFT_first(R_I,alpha,Coef,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GT
         E_hart_r,functioncalls,calculatehartreerealtimes = calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes)
         V_XC_r,E_XC,functioncalls,calculateXCtimes = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes)
         V_XC,functioncalls,gridintegrationtimes = grid_integration(V_XC_r,dr,phi,functioncalls,gridintegrationtimes)
-        V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtimes)
+        V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,calculateVSRtimes)
         V_SR,functioncalls,gridintegrationtimes = grid_integration(V_SR_r,dr,phi,functioncalls,gridintegrationtimes)
         E_SR,functioncalls,energycalculationtimes = energy_calculation(V_SR,P,functioncalls,energycalculationtimes)
         E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
@@ -550,7 +578,7 @@ def computeDFT_first(R_I,alpha,Coef,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GT
     computeDFTtimes=np.append(computeDFTtimes,et-st)
     return P,np.real(E_0),C,KS,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes,P_initguesstimes
 
-def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes):
+def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes):
     # This function performs conventional ground-state DFT to produce a converged ground state electron density, wavefunction, energy and Kohn-Sham orbitals.
     # The 'DFTsetup' function must be called prior to calling this function.
     with objmode(st='f8'):
@@ -567,7 +595,7 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
     E_hart_r,functioncalls,calculatehartreerealtimes = calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes)
     V_XC_r,E_XC,functioncalls,calculateXCtimes = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes)
     V_XC,functioncalls,gridintegrationtimes = grid_integration(V_XC_r,dr,phi,functioncalls,gridintegrationtimes)
-    V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtimes)
+    V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,calculateVSRtimes)
     V_SR,functioncalls,gridintegrationtimes = grid_integration(V_SR_r,dr,phi,functioncalls,gridintegrationtimes)
     E_SR,functioncalls,energycalculationtimes = energy_calculation(V_SR,P,functioncalls,energycalculationtimes)
     KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
@@ -591,7 +619,7 @@ def computeDFT(R_I,alpha,Coef,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G
         E_hart_r,functioncalls,calculatehartreerealtimes = calculate_hartree_real(V_r,n_r,dr,functioncalls,calculatehartreerealtimes)
         V_XC_r,E_XC,functioncalls,calculateXCtimes = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,calculateXCtimes)
         V_XC,functioncalls,gridintegrationtimes = grid_integration(V_XC_r,dr,phi,functioncalls,gridintegrationtimes)
-        V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,R_I,functioncalls,calculateVSRtimes)
+        V_SR_r,functioncalls,calculateVSRtimes = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,calculateVSRtimes)
         V_SR,functioncalls,gridintegrationtimes = grid_integration(V_SR_r,dr,phi,functioncalls,gridintegrationtimes)
         E_SR,functioncalls,energycalculationtimes = energy_calculation(V_SR,P,functioncalls,energycalculationtimes)
         E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
@@ -670,7 +698,7 @@ def propagator(select,H1,H2,dt,functioncalls,propagatortimes): #propagator funct
     propagatortimes=np.append(propagatortimes,et-st)
     return U,functioncalls,propagatortimes
 
-def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times):
+def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times):
     # This function performs the propagation to determine the new density matrix at the next timestep, depending on the propagator selected.
     match select:
         case 'CN':
@@ -696,7 +724,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,propagatortimes=propagator(select,H_c,[],dt,functioncalls,propagatortimes) # After the predictor-corrector regime, the unitary operator U is likely more accurate.
@@ -731,7 +759,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,propagatortimes=propagator(select,H_c,[],dt,functioncalls,propagatortimes)
@@ -768,7 +796,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
             # This is the correcting section of the EM propagator
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,propagatortimes=propagator('EM',H_c,[],dt,functioncalls,propagatortimes)
@@ -782,7 +810,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     P_new[u][v] *=2
             # As the EM propagator has determined a good approximate of the density matrix at the next timestep,
             # the 'computeE_0' function can be called to determine the energy at the next timestep.
-            Hdt,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            Hdt,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
             # The ETRS propagator can now be called
             U,functioncalls,propagatortimes=propagator(select,H,Hdt,dt,functioncalls,propagatortimes)
             U=np.real(U)
@@ -836,7 +864,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            E_0,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             Hdt=2*H_c-Hprev
@@ -986,7 +1014,7 @@ def EntropyPInitBasis(P,Pini,functioncalls,PgsEtimes):
     return EPinitBasis,functioncalls,PgsEtimes
 
 
-def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,kickstrength,kickdirection,projectname):
+def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,kickstrength,kickdirection,projectname):
     with objmode(st='f8'):
         st=time.time()
     # Ground state stuff
@@ -1046,14 +1074,15 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,kick
     vNEtimes=np.array([])
     PgsEtimes=np.array([])
     P_initguesstimes=np.array([])
+    PP_coefstimes=np.array([])
     RTTDDFTtimes=np.array([])
-    functioncalls=np.zeros((31,),dtype=int)
+    functioncalls=np.zeros((32,),dtype=int)
 
     # Performing calculation of all constant variables to remove the need to repeat it multiple times.
-    r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes=dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes)
+    r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,Cpp,rPP,alpha_PP,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes,PP_coefstimes=dftSetup(R_I,alpha,Coef,L,N_i,Z_I,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculateoverlaptimes,gridintegrationtimes,calculatekineticderivativetimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,basissettimes,PP_coefstimes)
 
     # Compute the ground state first
-    P,H,C,KS,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes,P_initguesstimes=computeDFT_first(R_I,alpha,Coef,L,N_i,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes,P_initguesstimes)
+    P,H,C,KS,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes,P_initguesstimes=computeDFT_first(R_I,alpha,Coef,L,N_i,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes,P_initguesstimes)
     # initialising all variable arrays
     Pgs=P
     energies=[]
@@ -1083,22 +1112,22 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,kick
         # Propagating depending on method.
         # AETRS, CAETRS and CFM4 require 2 prior timesteps, which use ETRS
         if i<2 and propagator==('AETRS'):
-            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
         elif i<2 and propagator==('CAETRS'):
-            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
         elif i<2 and propagator==('CFM4'):
-            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
         elif i>1 and propagator==('AETRS'):
-            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
         elif i>1 and propagator==('CAETRS'):
-            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
         elif i>1 and propagator==('CFM4'):
-            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
         else:
-            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
+            P,proptime,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,CGF_He,CGF_H,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,propagatetimes,propagatortimes,LagrangeExtrapolatetimes,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeE0times)
         print('Propagation time: '+str(proptime))
         # Converging on accurate KS and P
-        P,H,C,KS,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes)
+        P,H,C,KS,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes=computeDFT(R_I,alpha,Coef,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,GTOs_He,CGF_He,GTOs_H,CGF_H,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,functioncalls,calculaterealspacedensitytimes,calculatecoredensitytimes,energycalculationtimes,calculatehartreereciprocaltimes,gridintegrationtimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,computeDFTtimes)
         # Information Collection
         D_x,D_y,D_z,D_tot,functioncalls,tdttimes,gridintegrationtimes=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,tdttimes,gridintegrationtimes)
         mu_t=np.trace(np.dot(D_tot,P))
@@ -1136,14 +1165,14 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,kick
 
     with objmode(et='f8'):
          et=time.time()
-    functioncalls[30]+=1
+    functioncalls[31]+=1
     RTTDDFTtimes=np.append(RTTDDFTtimes,et-st)
     
-    return t,energies,mu,propagationtimes,SE,vNE,EPinit,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculaterealspacedensitytimes,calculatecoredensitytimes,gridintegrationtimes,energycalculationtimes,calculateoverlaptimes,calculatekineticderivativetimes,calculatehartreereciprocaltimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,computeE0times,computeDFTtimes,GaussianKicktimes,propagatortimes,propagatetimes,tdttimes,getptimes,LagrangeExtrapolatetimes,popanalysistimes,SEtimes,vNEtimes,PgsEtimes,RTTDDFTtimes,P_initguesstimes
+    return t,energies,mu,propagationtimes,SE,vNE,EPinit,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculaterealspacedensitytimes,calculatecoredensitytimes,gridintegrationtimes,energycalculationtimes,calculateoverlaptimes,calculatekineticderivativetimes,calculatehartreereciprocaltimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,computeE0times,computeDFTtimes,GaussianKicktimes,propagatortimes,propagatetimes,tdttimes,getptimes,LagrangeExtrapolatetimes,popanalysistimes,SEtimes,vNEtimes,PgsEtimes,RTTDDFTtimes,P_initguesstimes,PP_coefstimes
 
 #%%
 # Simulation parameters
-nsteps=100
+nsteps=1
 timestep=0.1
 SCFiterations=100
 kickstrength=0.1
@@ -1160,9 +1189,8 @@ alpha = np.array([[0.3136497915, 1.158922999, 6.362421394],[0.1688554040, 0.6239
 Coef = np.array([0.4446345422, 0.5353281423, 0.1543289673]) #Coefficients are the same for both He and H
 R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])]) #R_I[0] for He, R_I[1] for H.
 Z_I = np.array([2.,1.])
-Cpp = np.array([[-9.14737128,1.71197792],[-4.19596147,0.73049821]]) #He, H
 
-t,energies,mu,timings,SE,vNE,EPinit,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculaterealspacedensitytimes,calculatecoredensitytimes,gridintegrationtimes,energycalculationtimes,calculateoverlaptimes,calculatekineticderivativetimes,calculatehartreereciprocaltimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,computeE0times,computeDFTtimes,GaussianKicktimes,propagatortimes,propagatetimes,tdttimes,getptimes,LagrangeExtrapolatetimes,popanalysistimes,SEtimes,vNEtimes,PgsEtimes,RTTDDFTtimes,P_initguesstimes=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,Cpp,kickstrength,kickdirection,projectname)
+t,energies,mu,timings,SE,vNE,EPinit,functioncalls,GridCreatetimes,constructGTOstimes,constructCGFtimes,calculaterealspacedensitytimes,calculatecoredensitytimes,gridintegrationtimes,energycalculationtimes,calculateoverlaptimes,calculatekineticderivativetimes,calculatehartreereciprocaltimes,calculatehartreerealtimes,calculateXCtimes,calculateVSRtimes,calculateselfenergytimes,calculateIItimes,DFTsetuptimes,computeE0times,computeDFTtimes,GaussianKicktimes,propagatortimes,propagatetimes,tdttimes,getptimes,LagrangeExtrapolatetimes,popanalysistimes,SEtimes,vNEtimes,PgsEtimes,RTTDDFTtimes,P_initguesstimes,PP_coefstimes=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,alpha,Coef,R_I,Z_I,kickstrength,kickdirection,projectname)
 
 #%%
 # Post-Processing section
@@ -1232,7 +1260,8 @@ print('| '+'ShannonEntropy'.ljust(30)+'|'+str(functioncalls[26]).center(19)+'|'+
 print('| '+'vonNeumannEntropy'.ljust(30)+'|'+str(functioncalls[27]).center(19)+'|'+ str(np.round(np.mean(vNEtimes),13)).center(19)+'|')
 print('| '+'EntropyPInitBasis'.ljust(30)+'|'+str(functioncalls[28]).center(19)+'|'+ str(np.round(np.mean(PgsEtimes),13)).center(19)+'|')
 print('| '+'P_init_guess_calc'.ljust(30)+'|'+str(functioncalls[29]).center(19)+'|'+ str(np.round(np.mean(P_initguesstimes),13)).center(19)+'|')
-print('| '+'rttddft'.ljust(30)+'|'+str(functioncalls[30]).center(19)+'|'+ str(np.round(np.mean(RTTDDFTtimes),13)).center(19)+'|')
+print('| '+'PP_coefs'.ljust(30)+'|'+str(functioncalls[30]).center(19)+'|'+ str(np.round(np.mean(PP_coefstimes),13)).center(19)+'|')
+print('| '+'rttddft'.ljust(30)+'|'+str(functioncalls[31]).center(19)+'|'+ str(np.round(np.mean(RTTDDFTtimes),13)).center(19)+'|')
 print(''.ljust(73,'-'))
 
 # %%
