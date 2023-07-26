@@ -21,6 +21,7 @@ import re # Used to read and format .txt and .dat files (reading basis set libra
 from numba.typed import Dict
 from numba.core import types
 float_array = types.float64[:]
+
 # the number of threads can be specified by uncommenting one of the following functions,
 # run 'np.show_config()' to determine which to use.
 #os.environ['OMP_NUM_THREADS']='8'
@@ -50,32 +51,39 @@ def GridCreate(L,N_i,functioncalls,timers):
     return r_x,r_y,r_z,N,dr,functioncalls,timers
 
 @njit(cache=True)
-def GTO(a_GTO,r_GTO,R_GTO):
-    # This function evaluates a Gaussian-type orbital evaluated on the grid from user defined coefficients and exponents, 
-    # such that a_GTO = exponent, r_GTO = grid position vector and R_GTO = nuclei position vector. 
-    GTOcalc=(2*a_GTO/np.pi)**(3/4)*np.exp(-a_GTO*(np.linalg.norm(r_GTO - R_GTO))**2)
-    return GTOcalc
+def GTO(a,i,j,k,r,R) :
 
+    x = r[0]-R[0]
+    y = r[1]-R[1]
+    z = r[2]-R[2]
+
+    ans=(2*a/np.pi)**(3/4)*(((8*a)**(i+j+k)*math.gamma(i+1)*math.gamma(j+1)*math.gamma(k+1))/(math.gamma(2*i+1)*math.gamma(2*j+1)*math.gamma(2*k+1)))**(1/2)*x**i*y**j*z**k*np.exp(-a*(x**2+y**2+z**2))
+    #math.gamma(n+1) = math.factorial(n) only gamma function is compatible with numba
+    return ans
+    
 @njit(cache=True)
-def construct_GTOs(nuc,N,N_i,r_x,r_y,r_z,R_I,Alpha,functioncalls,timers):
-    # This function evaluates the Gaussian-type orbitals for a selected molecule at each point of the grid
-    # and saves it to an array. In this case, as the orbital approximation being used is STO-3G, the array
-    # has dimensions {3 x N_i x N_i x N_i}, as this approximation uses 3 Gaussian functions per orbital.
+def construct_GTOs(orbital,N,N_i,r_x,r_y,r_z,R_I,Alpha,functioncalls,timers):
 
     with objmode(st='f8'):
         st=time.time()
     #create a matrix of grid points for each of the three GTOs, initialised to zero.
     GTO_p = np.zeros(len(Alpha)*N).reshape(len(Alpha),N_i,N_i,N_i)
 
-    #Loop through GTOs and grid points, calculate the GTO value and assign to GTO_p.
     for gto in range(0,len(Alpha)) :
-        #for i,j,k in range(0,N_i) :    
-        for i in range(0,N_i) : 
+        for i in range(0,N_i) :
             for j in range(0,N_i) :
                 for k in range(0,N_i) :
-                    p = np.array([r_x[i],r_y[j],r_z[k]]) #Select current grid position vector.
+                    point = np.array([r_x[i],r_y[j],r_z[k]])
 
-                    GTO_p[gto][i][j][k] = GTO(Alpha[gto],p,R_I) #calculate GTO value using GTO function call.
+                    if orbital == 'S':
+                        GTO_p[gto][i][j][k] = GTO(Alpha[gto],0,0,0,point,R_I)
+                    if orbital == 'Px': 
+                        GTO_p[gto][i][j][k] = GTO(Alpha[gto],1,0,0,point,R_I)
+                    if orbital == 'Py': 
+                        GTO_p[gto][i][j][k] = GTO(Alpha[gto],0,1,0,point,R_I)
+                    if orbital == 'Pz': 
+                        GTO_p[gto][i][j][k] = GTO(Alpha[gto],0,0,1,point,R_I)
+
     with objmode(et='f8'):
          et=time.time()
     functioncalls[1]+=1
@@ -96,7 +104,7 @@ def construct_CGF(GTOs,N,N_i,Coef,functioncalls,timers):
     timers['constructCGFtimes']=np.append(timers['constructCGFtimes'],et-st)
     return CGF,functioncalls,timers
 
-def CP2K_basis_set_data(filename,element,basis_set,functioncalls,timers):
+def CP2K_basis_set_data(filename,element,basis_set,numorbitals,functioncalls,timers):
     # This function reads the selected basis set file within the CP2K data folder. In future, depending on licensing, we may be able to include a copy of the 'BASIS_MOLOPT' file, 
     # or read all of the data in the file and convert it into a .npy file.
     st=time.time()
@@ -142,16 +150,11 @@ def CP2K_basis_set_data(filename,element,basis_set,functioncalls,timers):
 
     # Formatting data into useable Python variables
     coef = coef.T   
-    if key[2] > 0. : coef = coef.reshape(int(key[2]),int(coef_range/key[2]),int(key[3])) #l,function,data                                                                                                                                            
-    else : coef = coef.reshape(1,int(coef_range),int(key[3]))
+    #if key[2] > 0. : coef = coef.reshape(int(key[2]),int(coef_range/key[2]),int(key[3])) #l,function,data                                                                                                                                            
+    #else : coef = coef.reshape(1,int(coef_range),int(key[3]))
 
-    coef_setup=np.array(coef,dtype=float).reshape(len(alpha),1,1)
-    coef_out=[]
-    for i in range(0,len(alpha)):
-        coef_out.append(coef_setup[i][0][0])
-    
-    coef=np.array(coef_out,dtype=float)
-    alpha=np.array(alpha,dtype=float).reshape(len(coef))
+    coef=np.array(coef,dtype=float).reshape(numorbitals,len(alpha))
+    alpha=np.array(alpha,dtype=float)
     et=time.time()
     functioncalls[3]+=1
     timers['basissettimes']=np.append(timers['basissettimes'],et-st)
@@ -458,49 +461,136 @@ def PP_coefs(Z_I,functioncalls,timers):
     timers['PP_coefstimes']=np.append(timers['PP_coefstimes'],et-st)
     return np.array(cPP).astype(np.float64),np.array(rPP).astype(np.float64),alpha_PP.astype(np.float64),functioncalls,timers
 
+@njit
+def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
+
+    #Y = np.complex128(np.zeros(N).reshape(N_i,N_i,N_i))
+    Y = np.zeros(N,dtype=np.complex128).reshape(N_i,N_i,N_i)
+    for i in range(0,N_i) :
+        for j in range(0,N_i) :
+            for k in range(0,N_i) :
+                #theta,phi = cart_2_sph(r_x[i],r_y[j],r_z[k]) #convert to spherical coords
+                #Y[i][j][k] = scipy.special.sph_harm(m,l,theta,phi) #harmonic function on the grid
+                if l == 0 :                                                                                                                                                                                                                         
+                    Y[i][j][k] = 0.5*np.sqrt(1/np.pi)                                                                                                                                                                                               
+                    continue                                                                                                                                                                                                                        
+
+                r = np.sqrt(r_x[i]**2+r_y[j]**2+r_z[k]**2)                                                                                                                                                                                          
+                if r < 0.01 : continue                                                                                                                                                                                                              
+                if m == -1: Y[i][j][k] = 0.5*np.sqrt(3/(2*np.pi))*(r_x[i]-np.sqrt(-1+0j)*r_y[j])/r                                                                                                                                                  
+                if m == 0 : Y[i][j][k] = 0.5*np.sqrt(3/np.pi)*(r_z[k]/r)                                                                                                                                                                            
+                if m == 1 : Y[i][j][k] = -0.5*np.sqrt(3/(2*np.pi))*(r_x[i]+np.sqrt(-1+0j)*r_y[j])/r         
+                
+    return Y
+
+@njit
+def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
+
+    p = np.zeros(N,dtype=np.complex128).reshape(N_i,N_i,N_i)
+    tot = 0. #used for normalisation
+
+    for i in range(0,N_i) :
+        for j in range(0,N_i) :
+            for k in range(0,N_i) :
+                r = np.sqrt(r_x[i]**2+r_y[j]**2+r_z[k]**2)
+                p[i][j][k] = r**(l+2*I-2)*np.exp(-0.5*(r/r_l[l])**2)
+                tot += p[i][j][k]*p[i][j][k]*r**2*dr
+    p = p/np.sqrt(tot) #normalisation
+    
+    return p
+
+@njit
+def pseudo_nl(phi,l,m,N,N_i,r_x,r_y,r_z,r_l,dr) :
+
+    V_nl = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
+    
+    for u in range(0,len(phi)) :
+        for v in range(0,len(phi)) :
+    
+            for l in range(0,1) : #only s orbital pseudopotential in the calculation of H2O ?
+                for i in range(1,2) : #only non-zero coefficient h is when i=j=1                                                                                                                                                                             
+                    for j in range(1,2) :
+                        for m in range(-l,l+1) :                                                                                                                                                                                                                
+
+                            Y = spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z)                                                                                                                                                                                                      
+
+                            p_I = projector(i,l,m,N,N_i,r_x,r_y,r_z,r_l,dr)
+                            p_J = projector(j,l,m,N,N_i,r_x,r_y,r_z,r_l,dr)
+                            
+                            #THIS IS NOT REALLY MATRIX MULTIPLICATION, JUST IN ARRAYS TO SPEED UP CODE (i.e. STILL POINT BY POINT MULTIPLICATION)                                                                                                                            
+                            V_nl[u][v] += np.real(np.sum(np.conjugate(phi[u])*p_I*Y)*h_l[l]*np.sum(phi[v]*p_J*np.conjugate(Y))*dr*dr)
+                 
+    return V_nl
+
 def element_interpreter(elements):
     Z_I=np.zeros(len(elements))
+    orbitals=np.empty([len(elements),5],dtype=str)
     for i in range(0,len(elements)):
         match elements[i]:
             case 'H':
                 Z_I[i]=1.0
+                orbitals[i]=['S','','','','']
             case 'He':
                 Z_I[i]=2.0
+                orbitals[i]=['S','','','','']
             case 'Li':
                 Z_I[i]=3.0
+                orbitals[i]=['S','S','','','']
             case 'Be':
                 Z_I[i]=4.0
+                orbitals[i]=['S','S','','','']
             case 'B':
                 Z_I[i]=5.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'C':
                 Z_I[i]=6.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'N':
                 Z_I[i]=7.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'O':
                 Z_I[i]=8.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'F':
                 Z_I[i]=9.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'Ne':
                 Z_I[i]=10.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'Na':
                 Z_I[i]=11.0
+                orbitals[i]=['S','Px','Py','Pz','S']
             case 'Mg':
                 Z_I[i]=12.0
+                orbitals[i]=['S','Px','Py','Pz','S']
             case 'Al':
                 Z_I[i]=13.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'Si':
                 Z_I[i]=14.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'P':
                 Z_I[i]=15.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'S':
                 Z_I[i]=16.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'Cl':
                 Z_I[i]=17.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case 'Ar':
                 Z_I[i]=18.0
+                orbitals[i]=['S','Px','Py','Pz','']
             case _:
                 raise TypeError("element["+str(i)+"] is invalid")
-    return np.array(Z_I)
+    
+    tot_orbitals=0
+    for i in range(0,len(elements)):
+        for j in range(0,np.size(orbitals,1)):
+            if orbitals[i][j]!='':
+                tot_orbitals+=1
+
+    return np.array(Z_I),orbitals,tot_orbitals
 
 def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     # This function calls all functions required to perform DFT that do not change during the SCF cycle.
@@ -509,14 +599,26 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
 
     with objmode(st='f8'):
         st=time.time()
-    Z_I=element_interpreter(elements)
+    Z_I,orbitals,tot_orbitals=element_interpreter(elements)
     r_x,r_y,r_z,N,dr,functioncalls,timers=GridCreate(L,N_i,functioncalls,timers)
-    phi = np.zeros(len(Z_I)*N).reshape(len(Z_I),N_i,N_i,N_i)
+    phi = np.zeros(tot_orbitals*N).reshape(tot_orbitals,N_i,N_i,N_i)
+    k=0
+    
     for i in range(0,len(elements)):
-        alpha_temp,coef_temp,functioncalls,timers = CP2K_basis_set_data(basis_filename,elements[i],basis_sets[i],functioncalls,timers)
-        GTOs_temp,functioncalls,timers = construct_GTOs(elements[i],N,N_i,r_x,r_y,r_z,R_I[i],alpha_temp,functioncalls,timers)
-        phi[i],functioncalls,timers = construct_CGF(GTOs_temp,N,N_i,coef_temp,functioncalls,timers)
+        l=0
+        alpha_temp,coef_temp,functioncalls,timers = CP2K_basis_set_data(basis_filename,elements[i],basis_sets[i],np.count_nonzero(orbitals[i]!=''),functioncalls,timers)
+        for j in range(0,len(orbitals[i])):
+            if orbitals[i][j]=='':
+                continue
+            else:
+                GTOs_temp,functioncalls,timers = construct_GTOs(orbitals[i][j],N,N_i,r_x,r_y,r_z,R_I[i],alpha_temp,functioncalls,timers)
+                phi[k],functioncalls,timers = construct_CGF(GTOs_temp,N,N_i,coef_temp[l],functioncalls,timers)
+                l+=1
+                k+=1
+                
+
     phi=normalise_basis_set(phi,dr)
+    print(phi.shape)
     G_u = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     G_v = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     G_w = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
