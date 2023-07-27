@@ -505,7 +505,7 @@ def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
     return p
 
 @njit
-def pseudo_nl(phi,l,m,N,N_i,r_x,r_y,r_z,r_l,dr) :
+def pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr) :
 
     V_nl = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
     
@@ -655,16 +655,22 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     S, functioncalls,timers = calculate_overlap(N,N_i,dr,phi,functioncalls,timers)
     delta_T,functioncalls,timers = calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,timers)
     cPP,rPP,alpha_PP,functioncalls,timers=PP_coefs(Z_I,functioncalls,timers)
+    r_l = np.array([0.221786,0.256829])
+    h_l = np.array([18.266917,0.])
+    if np.any(Z_I>=4.0)==True:
+        V_NL = pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr)
+    else:
+        V_NL=0
     E_self,functioncalls,timers = calculate_self_energy(Z_I,alpha_PP,functioncalls,timers)
     E_II,functioncalls,timers = calculate_Ion_interaction(Z_I,R_I,alpha_PP,functioncalls,timers)
     with objmode(et='f8'):
          et=time.time()
     functioncalls[16]+=1
     timers['DFTsetuptimes']=np.append(timers['DFTsetuptimes'],et-st)
-    return Z_I,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,[],[],S,delta_T,E_self,E_II,phi,cPP,rPP,alpha_PP,functioncalls,timers
+    return Z_I,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,[],[],S,delta_T,E_self,E_II,phi,cPP,rPP,alpha_PP,V_NL,functioncalls,timers
 
 
-def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,timers):
+def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers):
     # This function returns the total energy for a given density matrix P.
     with objmode(st='f8'):
         st=time.time()
@@ -682,14 +688,15 @@ def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_I
     V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
     V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
     E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
-    E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
+    E_NL,functioncalls,timers=energy_calculation(V_NL,P,functioncalls,timers)
+    E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II + E_NL
     with objmode(et='f8'):
          et=time.time()
     functioncalls[17]+=1
     timers['computeE0times']=np.append(timers['computeE0times'],et-st)
     return E_0,functioncalls,timers
 
-def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,basis_filename,functioncalls,timers):
+def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,basis_filename,functioncalls,timers):
     # This function performs conventional ground-state DFT to produce a converged ground state electron density, wavefunction, energy and Kohn-Sham orbitals.
     # The 'DFTsetup' function must be called prior to calling this function.
     with objmode(st='f8'):
@@ -710,7 +717,7 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
     V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
     V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
     E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
-    KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
+    KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
     KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
     S=Matrix(S)
     U,s = S.diagonalize()
@@ -734,8 +741,9 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
         V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
         V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
         E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
-        E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
-        KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
+        E_NL,functioncalls,timers=energy_calculation(V_NL,P,functioncalls,timers)
+        E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II+E_NL
+        KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
         KS = np.real(KS)
         KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
         C_temp, e = KS_temp.diagonalize()
@@ -760,7 +768,7 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
     timers['computeDFTtimes']=np.append(timers['computeDFTtimes'],et-st)
     return P,np.real(E_0),C,KS,functioncalls,timers
 
-def computeDFT(R_I,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,functioncalls,timers):
+def computeDFT(R_I,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers):
     # This function performs conventional ground-state DFT to produce a converged ground state electron density, wavefunction, energy and Kohn-Sham orbitals.
     # The 'DFTsetup' function must be called prior to calling this function.
     with objmode(st='f8'):
@@ -780,7 +788,7 @@ def computeDFT(R_I,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,
     V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
     V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
     E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
-    KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
+    KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
     KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
     S=Matrix(S)
     U,s = S.diagonalize()
@@ -804,8 +812,9 @@ def computeDFT(R_I,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,
         V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
         V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
         E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
-        E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II
-        KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)
+        E_NL,functioncalls,timers=energy_calculation(V_NL,P,functioncalls,timers)
+        E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II + E_NL
+        KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
         KS = np.real(KS)
         KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
         C_temp, e = KS_temp.diagonalize()
@@ -880,7 +889,7 @@ def propagator(select,H1,H2,dt,functioncalls,timers): #propagator functions
     timers['propagatortimes']=np.append(timers['propagatortimes'],et-st)
     return U,functioncalls,timers
 
-def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i,phi,rPP,alpha_PP,functioncalls,timers):
+def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i,phi,rPP,alpha_PP,V_NL,functioncalls,timers):
     # This function performs the propagation to determine the new density matrix at the next timestep, depending on the propagator selected.
     match select:
         case 'CN':
@@ -906,7 +915,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,timers)
+            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,timers=propagator(select,H_c,[],dt,functioncalls,timers) # After the predictor-corrector regime, the unitary operator U is likely more accurate.
@@ -941,7 +950,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,timers)
+            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,timers=propagator(select,H_c,[],dt,functioncalls,timers)
@@ -978,7 +987,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,timers)
+            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # This is the correcting section of the EM propagator
             H_c=H+(1/2)*(E_0-H)
             U,functioncalls,timers=propagator('EM',H_c,[],dt,functioncalls,timers)
@@ -992,7 +1001,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
                     P_new[u][v] *=2
             # As the EM propagator has determined a good approximate of the density matrix at the next timestep,
             # the 'computeE_0' function can be called to determine the energy at the next timestep.
-            Hdt,functioncalls,timers=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,timers)
+            Hdt,functioncalls,timers=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # The ETRS propagator can now be called
             U,functioncalls,timers=propagator(select,H,Hdt,dt,functioncalls,timers)
             U=np.real(U)
@@ -1046,7 +1055,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
                     for p in range(0,len(P_p)-1) :
                         P_p[u][v] += C_p[u][p]*C_p[v][p]
                     P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,functioncalls,timers)
+            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             Hdt=2*H_c-Hprev
@@ -1268,11 +1277,11 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     functioncalls=np.zeros((32,),dtype=int)
 
     # Performing calculation of all constant variables to remove the need to repeat it multiple times.
-    Z_I,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,Cpp,rPP,alpha_PP,functioncalls,timers=dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers)
+    Z_I,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,Cpp,rPP,alpha_PP,V_NL,functioncalls,timers=dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers)
 
     print('Ground state calculations:\n')
     # Compute the ground state first
-    P,H,C,KS,functioncalls,timers=computeDFT_first(R_I,L,N_i,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,basis_filename,functioncalls,timers)
+    P,H,C,KS,functioncalls,timers=computeDFT_first(R_I,L,N_i,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,basis_filename,functioncalls,timers)
     # initialising all variable arrays
     Pgs=P
     energies=[]
@@ -1302,22 +1311,22 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
         # Propagating depending on method.
         # AETRS, CAETRS and CFM4 require 2 prior timesteps, which use ETRS
         if i<2 and propagator==('AETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,timers)
+            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         elif i<2 and propagator==('CAETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,timers)
+            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         elif i<2 and propagator==('CFM4'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,timers)
+            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         elif i>1 and propagator==('AETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,timers)
+            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         elif i>1 and propagator==('CAETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,timers)
+            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         elif i>1 and propagator==('CFM4'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,timers)
+            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         else:
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,functioncalls,timers)
+            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         print('Propagation time: '+str(proptime))
         # Converging on accurate KS and P
-        P,H,C,KS,functioncalls,timers=computeDFT(R_I,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,functioncalls,timers)
+        P,H,C,KS,functioncalls,timers=computeDFT(R_I,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         # Information Collection
         D_x,D_y,D_z,D_tot,functioncalls,timers=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers)
         mu_t=np.trace(np.dot(D_tot,P))
@@ -1376,7 +1385,7 @@ N_i=100
 
 # Molecule parameters
 R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])]) #R_I[0] for He, R_I[1] for H.
-elements = ['Li','H']
+elements = ['He','H']
 basis_filename='BASIS_MOLOPT'
 basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
 
