@@ -118,7 +118,7 @@ def CP2K_basis_set_data(filename,element,basis_set,numorbitals,functioncalls,tim
     coef = np.array([])
     coef_temp = np.array([])
 
-    with open(data_path+'/'+filename) as fin : # This sections loops over all lines and extracts the data required for the specified element
+    with open(data_path+'/'+filename) as fin :
         for line in fin :
             if check == 1 :
                 if line  == (' 1\n') :
@@ -130,8 +130,7 @@ def CP2K_basis_set_data(filename,element,basis_set,numorbitals,functioncalls,tim
                         if string == ' '  : continue
                         else : key = np.append(key,int(string))
                     get_key = 0
-                    if key[4:-1].size > 0  : coef_range = int(np.sum(key[4:-1]))
-                    if key[4:-1].size == 0 : coef_range = int(key[4])
+                    coef_range = int(np.sum(key[4:]))
                     get_string = re.compile('\\s+'+string_part*(coef_range+1)+'\\+?') #+1 for exponents column                                                                                                                                       
                     continue
                 match_string = get_string.match(line)
@@ -148,8 +147,14 @@ def CP2K_basis_set_data(filename,element,basis_set,numorbitals,functioncalls,tim
                 print(line)
                 check = 1
 
+    coef = coef.T
+    #if key[2] > 0. : coef = coef.reshape(int(key[2]),int(coef_range/key[2]),int(key[3])) #l,function,data                                                                                                                                            
+    #else : coef = coef.reshape(1,int(coef_range),int(key[3]))
+    
+    #coef.reshape(int(coef_range),int(key[3]))
+
     # Formatting data into useable Python variables
-    coef = coef.T   
+    #coef = coef.T   
     #if key[2] > 0. : coef = coef.reshape(int(key[2]),int(coef_range/key[2]),int(key[3])) #l,function,data                                                                                                                                            
     #else : coef = coef.reshape(1,int(coef_range),int(key[3]))
 
@@ -524,72 +529,76 @@ def pseudo_nl(phi,l,m,N,N_i,r_x,r_y,r_z,r_l,dr) :
 
 def element_interpreter(elements):
     Z_I=np.zeros(len(elements))
-    orbitals=np.empty([len(elements),5],dtype=str)
+    orbitals=np.empty([len(elements),3],dtype=str)
     for i in range(0,len(elements)):
         match elements[i]:
             case 'H':
                 Z_I[i]=1.0
-                orbitals[i]=['S','','','','']
+                orbitals[i]=['S','','']
             case 'He':
                 Z_I[i]=2.0
-                orbitals[i]=['S','','','','']
+                orbitals[i]=['S','','']
             case 'Li':
                 Z_I[i]=3.0
-                orbitals[i]=['S','S','','','']
+                orbitals[i]=['S','S','']
             case 'Be':
                 Z_I[i]=4.0
-                orbitals[i]=['S','S','','','']
+                orbitals[i]=['S','S','']
             case 'B':
                 Z_I[i]=5.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'C':
                 Z_I[i]=6.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'N':
                 Z_I[i]=7.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'O':
                 Z_I[i]=8.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'F':
                 Z_I[i]=9.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'Ne':
                 Z_I[i]=10.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'Na':
                 Z_I[i]=11.0
-                orbitals[i]=['S','Px','Py','Pz','S']
+                orbitals[i]=['S','P','S']
             case 'Mg':
                 Z_I[i]=12.0
-                orbitals[i]=['S','Px','Py','Pz','S']
+                orbitals[i]=['S','P','S']
             case 'Al':
                 Z_I[i]=13.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'Si':
                 Z_I[i]=14.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'P':
                 Z_I[i]=15.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'S':
                 Z_I[i]=16.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'Cl':
                 Z_I[i]=17.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case 'Ar':
                 Z_I[i]=18.0
-                orbitals[i]=['S','Px','Py','Pz','']
+                orbitals[i]=['S','P','']
             case _:
                 raise TypeError("element["+str(i)+"] is invalid")
     
     tot_orbitals=0
     for i in range(0,len(elements)):
         for j in range(0,np.size(orbitals,1)):
-            if orbitals[i][j]!='':
+            if orbitals[i][j]=='S':
                 tot_orbitals+=1
-
+            elif orbitals[i][j]=='P':
+                tot_orbitals+=3
+    
+    print(orbitals)
+    print(tot_orbitals)
     return np.array(Z_I),orbitals,tot_orbitals
 
 def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
@@ -603,18 +612,35 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     r_x,r_y,r_z,N,dr,functioncalls,timers=GridCreate(L,N_i,functioncalls,timers)
     phi = np.zeros(tot_orbitals*N).reshape(tot_orbitals,N_i,N_i,N_i)
     k=0
-    
+    print(orbitals)
     for i in range(0,len(elements)):
+        atomorbitals=0
+        for I in range(0,3):
+            if orbitals[i][I]=='S': 
+                atomorbitals+=1
+            elif orbitals[i][I]=='P':
+                atomorbitals+=1
+        
         l=0
-        alpha_temp,coef_temp,functioncalls,timers = CP2K_basis_set_data(basis_filename,elements[i],basis_sets[i],np.count_nonzero(orbitals[i]!=''),functioncalls,timers)
+        alpha_temp,coef_temp,functioncalls,timers = CP2K_basis_set_data(basis_filename,elements[i],basis_sets[i],atomorbitals,functioncalls,timers)
+        print(coef_temp.shape)
         for j in range(0,len(orbitals[i])):
             if orbitals[i][j]=='':
                 continue
             else:
-                GTOs_temp,functioncalls,timers = construct_GTOs(orbitals[i][j],N,N_i,r_x,r_y,r_z,R_I[i],alpha_temp,functioncalls,timers)
-                phi[k],functioncalls,timers = construct_CGF(GTOs_temp,N,N_i,coef_temp[l],functioncalls,timers)
-                l+=1
-                k+=1
+                if orbitals[i][j]=='S':
+                    GTOs_temp,functioncalls,timers = construct_GTOs(orbitals[i][j],N,N_i,r_x,r_y,r_z,R_I[i],alpha_temp,functioncalls,timers)
+                    phi[k],functioncalls,timers = construct_CGF(GTOs_temp,N,N_i,coef_temp[l],functioncalls,timers)
+                    l+=1
+                    k+=1
+                if orbitals[i][j]=='P':
+                    Ps=['Px','Py','Pz']
+                    for m in range(0,len(Ps)):
+                        GTOs_temp,functioncalls,timers = construct_GTOs(Ps[m],N,N_i,r_x,r_y,r_z,R_I[i],alpha_temp,functioncalls,timers)
+                        phi[k],functioncalls,timers = construct_CGF(GTOs_temp,N,N_i,coef_temp[l],functioncalls,timers)
+                        k+=1
+                    l+=1
+                
                 
 
     phi=normalise_basis_set(phi,dr)
@@ -1350,7 +1376,7 @@ N_i=100
 
 # Molecule parameters
 R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])]) #R_I[0] for He, R_I[1] for H.
-elements = ['He','H']
+elements = ['Li','H']
 basis_filename='BASIS_MOLOPT'
 basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
 
