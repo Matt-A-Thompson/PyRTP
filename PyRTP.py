@@ -744,10 +744,6 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
         E_NL,functioncalls,timers=energy_calculation(V_NL,P,functioncalls,timers)
         T,functioncalls,timers = energy_calculation(delta_T,P,functioncalls,timers)
         E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II+E_NL
-        print(E_hart_r)
-        print(E_XC)
-        print(E_SR)
-        print(T)
         KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
         KS = np.real(KS)
         KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
@@ -1332,7 +1328,8 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
             P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         print('Propagation time: '+str(proptime))
         # Converging on accurate KS and P
-        P,H,C,KS,functioncalls,timers=computeDFT(R_I,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        #P,H,C,KS,functioncalls,timers=computeDFT(R_I,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        H,functioncalls,timers=computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         # Information Collection
         D_x,D_y,D_z,D_tot,functioncalls,timers=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers)
         mu_t=np.trace(np.dot(D_tot,P))
@@ -1377,10 +1374,10 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
 
 #%%
 # Simulation parameters
-nsteps=10
+nsteps=100
 timestep=0.1
 SCFiterations=100
-kickstrength=2e-5
+kickstrength=0.1
 kickdirection=np.array([1,0,0])
 proptype='CFM4'
 projectname='CFM4run'
@@ -1432,7 +1429,7 @@ en=h*freq
 plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
-#plt.xlim([0, 5e-7])
+plt.xlim([-1e-9, 0.4e-7])
 #%%
 # Padded Absorption Spectrum plot
 filterpercentage=0
@@ -1448,7 +1445,7 @@ en=h*freq
 plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
-#plt.xlim([0, 5e-7])
+plt.xlim([0, 5e-7])
 # %%
 #Timings table
 print(''.ljust(73,'-'))
