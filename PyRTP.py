@@ -754,9 +754,9 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
         print("density matrix : ","\n", P, "\n")       # if required.
         print("KS matrix : ","\n", KS, "\n")
         P_new=np.zeros_like(P_init)
-        for u in range(0,2):
-            for v in range(0,2) :
-                for p in range(0,1) :
+        for u in range(0,len(P_init)):
+            for v in range(0,len(P_init)) :
+                for p in range(0,len(P_init)-1) :
                     P_new[u][v] += C[u][p]*C[v][p]
                 P_new[u][v] *=2
         if np.all(abs(P-P_new)<= err)==True:
