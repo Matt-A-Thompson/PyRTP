@@ -278,10 +278,12 @@ def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,
             for k in range(0,N_i) :
 
                 g = np.array([G_u[i],G_v[j],G_w[k]])
+
                 for I in range(0,len(phi)) :
-                    for J in range(0,len(phi)):
-                        with objmode():
-                            delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
+                    for J in range(0,len(phi)) :
+
+                        delta_T[I][J] += np.real(0.5*L**3/N**2*np.dot(g,g)*(np.conjugate(phi_PW_G[I][i][j][k])*phi_PW_G[J][i][j][k]))
+
     with objmode(et='f8'):
          et=time.time()
     functioncalls[9]+=1
@@ -396,12 +398,10 @@ def calculate_Ion_interaction(Z_I,R_I,alpha_PP,functioncalls,timers) :
         st=time.time()
     E_II=0
     R_pp = 1/alpha_PP #R_{I}^{c}
-    for i in range(0,len(Z_I)):
-        for j in range(0,len(Z_I)):
-            if i==j:
-                continue
-            else:
-                E_II += Z_I[i]*Z_I[j]/np.linalg.norm(R_I[i]-R_I[j])*math.erfc(np.linalg.norm(R_I[i]-R_I[j])/np.sqrt(R_pp[i]**2+R_pp[j]**2))
+    for i in range(0,len(Z_I)) :
+        for j in range(0,len(Z_I)) :
+            if i == j : continue
+            E_II += 0.5*Z_I[i]*Z_I[j]/np.linalg.norm(R_I[i]-R_I[j])*math.erfc(np.linalg.norm(R_I[i]-R_I[j])/np.sqrt(R_pp[i]**2+R_pp[j]**2))
     
     with objmode(et='f8'):
          et=time.time()
@@ -742,7 +742,12 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
         V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
         E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
         E_NL,functioncalls,timers=energy_calculation(V_NL,P,functioncalls,timers)
+        T,functioncalls,timers = energy_calculation(delta_T,P,functioncalls,timers)
         E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II+E_NL
+        print(E_hart_r)
+        print(E_XC)
+        print(E_SR)
+        print(T)
         KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
         KS = np.real(KS)
         KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
@@ -813,6 +818,7 @@ def computeDFT(R_I,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,
         V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
         E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
         E_NL,functioncalls,timers=energy_calculation(V_NL,P,functioncalls,timers)
+        T,functioncalls,timers = energy_calculation(delta_T,P,functioncalls,timers)
         E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II + E_NL
         KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
         KS = np.real(KS)
@@ -1371,10 +1377,10 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
 
 #%%
 # Simulation parameters
-nsteps=2
+nsteps=10
 timestep=0.1
 SCFiterations=100
-kickstrength=0.1
+kickstrength=2e-5
 kickdirection=np.array([1,0,0])
 proptype='CFM4'
 projectname='CFM4run'
