@@ -16,7 +16,7 @@ import os # Mostly used to create files and directories
 from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
 import matplotlib.pyplot as plt # Used for post-processing of data
 import time # Used to check run times of certain functions
-from numba import jit,njit,objmode # Translates Python script into machine code for significantly faster runtimes
+from numba import jit,njit,objmode,typeof # Translates Python script into machine code for significantly faster runtimes
 import re # Used to read and format .txt and .dat files (reading basis set libraries, etc.)
 from numba.typed import Dict
 from numba.core import types
@@ -165,6 +165,7 @@ def CP2K_basis_set_data(filename,element,basis_set,numorbitals,functioncalls,tim
     timers['basissettimes']=np.append(timers['basissettimes'],et-st)
     return alpha.astype(np.float64),coef.astype(np.float64),functioncalls,timers
 
+@njit(cache=True)
 def normalise_basis_set(phi,dr):
     for u in range(0,len(phi)): 
         phi[u] = phi[u]*np.sqrt(1/np.sum(phi[u]*phi[u]*dr))
@@ -466,7 +467,7 @@ def PP_coefs(Z_I,functioncalls,timers):
     timers['PP_coefstimes']=np.append(timers['PP_coefstimes'],et-st)
     return np.array(cPP).astype(np.float64),np.array(rPP).astype(np.float64),alpha_PP.astype(np.float64),functioncalls,timers
 
-@njit
+@njit(cache=True)
 def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
 
     #Y = np.complex128(np.zeros(N).reshape(N_i,N_i,N_i))
@@ -488,7 +489,7 @@ def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
                 
     return Y
 
-@njit
+@njit(cache=True)
 def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
 
     p = np.zeros(N,dtype=np.complex128).reshape(N_i,N_i,N_i)
@@ -504,7 +505,7 @@ def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
     
     return p
 
-@njit
+@njit(cache=True)
 def pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr) :
 
     V_nl = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
@@ -664,7 +665,6 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     timers['DFTsetuptimes']=np.append(timers['DFTsetuptimes'],et-st)
     return Z_I,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,[],[],S,delta_T,E_self,E_II,phi,cPP,rPP,alpha_PP,V_NL,functioncalls,timers
 
-
 def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers):
     # This function returns the total energy for a given density matrix P.
     with objmode(st='f8'):
@@ -679,7 +679,6 @@ def computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_I
     V_hart,functioncalls,timers = grid_integration(V_r,dr,phi,functioncalls,timers)
     E_hart_r,functioncalls,timers = calculate_hartree_real(V_r,n_r,dr,functioncalls,timers)
     V_XC_r,E_XC,functioncalls,timers = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,timers)
-    V_XC,functioncalls,timers = grid_integration(V_XC_r,dr,phi,functioncalls,timers)
     V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
     V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
     E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
@@ -789,7 +788,8 @@ def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,P,functioncalls,timers)
 # Propagator - this function selects the equation to determine the unitary operator to propagate 
 # the system forward in time a singular timestep, using predictor-corrector regime (if applicable)
 # This function uses a match-case statement, hence the need for Python 3.10 or greater.
-def propagator(select,H1,H2,dt,dr,phi,functioncalls,timers): #propagator functions
+@njit(cache=True)
+def propagator(select,H1,H2,dt,functioncalls,timers): #propagator functions
     with objmode(st='f8'):
         st=time.time()
     
@@ -816,232 +816,402 @@ def propagator(select,H1,H2,dt,dr,phi,functioncalls,timers): #propagator functio
     timers['propagatortimes']=np.append(timers['propagatortimes'],et-st)
     return U,functioncalls,timers
 
-def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,Hprev,t,energies,tnew,i,phi,rPP,alpha_PP,V_NL,functioncalls,timers):
-    # This function performs the propagation to determine the new density matrix at the next timestep, depending on the propagator selected.
+def propagate_noKSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
+    with objmode(st='f8'):
+        st=time.time()
     match select:
         case 'CN':
-            # The Crank-Nicholson propagator uses a predictor-corrector algorithm to ensure the propagation is accurate.
-            with objmode(st='f8'):
-                st=time.time()
-            # This is the predicting section
             if i==0:
-                H_p=H
-            elif i>0 and i<3:
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2),functioncalls,timers)  # LagrangeExtrapolate fits a curve to the previous set of energies
-                                                                                                                                                          # and extrapolates based on that. It is important that the number of
-            else:                                                                                                                                         # points be limited so as not to cause instability.
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],t[i-1]+(1/2),functioncalls,timers)  
-
-            U,functioncalls,timers=propagator(select,H_p,[],dt,dr,phi,functioncalls,timers) # calling the propagtor function to determine the unitary operator U.
-            U=np.real(U)
-            C_p=np.dot(U,C)
-            # This is the updating section
-            P_p=np.zeros_like(P)
-            for u in range(0,len(P_p)):
-                for v in range(0,len(P_p)) :
-                    for p in range(0,len(P_p)-1) :
-                        P_p[u][v] += C_p[u][p]*C_p[v][p]
-                    P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-            # This is the correcting section
-            H_c=H+(1/2)*(E_0-H)
-            U,functioncalls,timers=propagator(select,H_c,[],dt,dr,phi,functioncalls,timers) # After the predictor-corrector regime, the unitary operator U is likely more accurate.
-            U=np.real(U)
-            C_new=np.dot(U,C)
-            P_new=np.zeros_like(P)
-            for u in range(0,len(P_new)):
-                for v in range(0,len(P_new)) :
-                    for p in range(0,len(P_new)-1) :
-                        P_new[u][v] += C_new[u][p]*C_new[v][p]
-                    P_new[u][v] *=2
-            with objmode(et='f8'):
-                et=time.time()
+                KS_half=KS
+            else:
+                KS_half=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS_half,0,dt,functioncalls,timers)
         case 'EM':
-            # The Exponential Midpoint propagator uses a predictor-corrector algorithm to ensure the propagation is accurate.
-            with objmode(st='f8'):
-                st=time.time()
-            # This is the predicting section
             if i==0:
-                H_p=H
-            elif i>0 and i<3:
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(dt/2),functioncalls,timers)  
+                KS_half=KS
             else:
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],t[i-1]+(dt/2),functioncalls,timers)    
-            U,functioncalls,timers=propagator(select,H_p,[],dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_p=np.dot(U,C)
-            # This is the updating section
-            P_p=np.zeros_like(P)
-            for u in range(0,len(P_p)):
-                for v in range(0,len(P_p)) :
-                    for p in range(0,len(P_p)-1) :
-                        P_p[u][v] += C_p[u][p]*C_p[v][p]
-                    P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-            # This is the correcting section
-            H_c=H+(1/2)*(E_0-H)
-            U,functioncalls,timers=propagator(select,H_c,[],dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_new=np.dot(U,C)
-            P_new=np.zeros_like(P)
-            for u in range(0,len(P_new)):
-                for v in range(0,len(P_new)) :
-                    for p in range(0,len(P_new)-1) :
-                        P_new[u][v] += C_new[u][p]*C_new[v][p]
-                    P_new[u][v] *=2
-            with objmode(et='f8'):
-                et=time.time()
+                KS_half=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS_half,0,dt,functioncalls,timers)
         case 'ETRS':
-            # The ETRS propagator requires an approximation of the energy at the next timestep. As such,
-            # the EM propagator is used first to determine the energy at the next timestep, then the ETRS
-            # propagator is used to ensure the density matrix is accurate and time-reversal symmetry is enforced.
-            with objmode(st='f8'):
-                st=time.time()
-            # This is the predicting section of the EM propagator
             if i==0:
-                H_p=H
-            elif i>0 and i<5:
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2),functioncalls,timers) 
+                KS_half=KS
             else:
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2),functioncalls,timers)     
-            U,functioncalls,timers=propagator('EM',H_p,[],dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_p=np.dot(U,C)
-            # This is the updating section of the EM propagator
-            P_p=np.zeros_like(P)
-            for u in range(0,len(P_p)):
-                for v in range(0,len(P_p)) :
-                    for p in range(0,len(P_p)-1) :
-                        P_p[u][v] += C_p[u][p]*C_p[v][p]
-                    P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-            # This is the correcting section of the EM propagator
-            H_c=H+(1/2)*(E_0-H)
-            U,functioncalls,timers=propagator('EM',H_c,[],dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_new=np.dot(U,C)
-            P_new=np.zeros_like(P)
-            for u in range(0,len(P_new)):
-                for v in range(0,len(P_new)) :
-                    for p in range(0,len(P_new)-1) :
-                        P_new[u][v] += C_new[u][p]*C_new[v][p]
-                    P_new[u][v] *=2
-            # As the EM propagator has determined a good approximate of the density matrix at the next timestep,
-            # the 'computeE_0' function can be called to determine the energy at the next timestep.
-            Hdt,functioncalls,timers=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-            # The ETRS propagator can now be called
-            U,functioncalls,timers=propagator(select,H,Hdt,dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_new=np.dot(U,C)
-            P_new=np.zeros_like(P)
-            for u in range(0,len(P_new)):
-                for v in range(0,len(P_new)) :
-                    for p in range(0,len(P_new)-1) :
-                        P_new[u][v] += C_new[u][p]*C_new[v][p]
-                    P_new[u][v] *=2
-            with objmode(et='f8'):
-                et=time.time()
+                KS_half=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS_half,0,dt,functioncalls,timers)
+            P_next=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+            KS_next,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,KS,KS_next,dt,functioncalls,timers)
         case 'AETRS':
-            # The AETRS propagator uses a similar mechanism to the ETRS propagator, except rather than using the EM
-            # propagator to predict the new density matrix (and thus energy), Lagrange Extrapolation is used.
-            with objmode(st='f8'):
-                st=time.time()
-            if i<5:
-                Hdt,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],tnew,functioncalls,timers) 
+            if i==0:
+                KS_next=KS
             else:
-                Hdt,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew,functioncalls,timers)   
-            U,functioncalls,timers=propagator(select,H,Hdt,dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_new=np.dot(U,C)
-            P_new=np.zeros_like(P)
-            for u in range(0,len(P_new)):
-                for v in range(0,len(P_new)) :
-                    for p in range(0,len(P_new)-1) :
-                        P_new[u][v] += C_new[u][p]*C_new[v][p]
-                    P_new[u][v] *=2
-            with objmode(et='f8'):
-                et=time.time()
+                KS_next=((2)*KS)-(1*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS,KS_next,dt,functioncalls,timers)
         case 'CAETRS':
-            # The CAETRS propagator works much in the same way as the AETRS propagator, with the inclusion of a
-            # predictor-corrector algorithm to ensure accuracy, whilst still being significantly more efficient 
-            # than the ETRS propagator.
-            with objmode(st='f8'):
-                st=time.time()    
-            # This is the predicting section
-            if i<5:
-                Hdt,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],tnew,functioncalls,timers) 
-            else:
-                Hdt,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew,functioncalls,timers) 
-            # This is the updating section
-            U,functioncalls,timers=propagator(select,H,Hdt,dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_p=np.dot(U,C)
-            P_p=np.zeros_like(P)
-            for u in range(0,len(P_p)):
-                for v in range(0,len(P_p)) :
-                    for p in range(0,len(P_p)-1) :
-                        P_p[u][v] += C_p[u][p]*C_p[v][p]
-                    P_p[u][v] *=2
-            E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-            # This is the correcting section
-            H_c=H+(1/2)*(E_0-H)
-            Hdt=2*H_c-Hprev
-            U,functioncalls,timers=propagator(select,H_c,Hdt,dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_new=np.dot(U,C)
-            P_new=np.zeros_like(P)
-            for u in range(0,len(P_new)):
-                for v in range(0,len(P_new)) :
-                    for p in range(0,len(P_new)-1) :
-                        P_new[u][v] += C_new[u][p]*C_new[v][p]
-                    P_new[u][v] *=2
-            with objmode(et='f8'):
-                et=time.time()
+            raise TypeError("CAETRS is not available without PC algorithm")
         case 'CFM4':
-            # The commutator-free 4th order Magnus propagator uses 2 approximations of energies at future times to
-            # provide an accurate and efficient approximation of the unitary operator. This method is preferred.
-            with objmode(st='f8'):
-                st=time.time()
-            if i<3:
-                Ht1,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)-(np.sqrt(3)/6))*dt,functioncalls,timers)
-                Ht2,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)+(np.sqrt(3)/6))*dt,functioncalls,timers) 
+            if i==0:
+                KS_t1=KS
+                KS_t2=KS
             else:
-                Ht1,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],(t[i-1])+((1/2)-(np.sqrt(3)/6))*dt,functioncalls,timers)
-                Ht2,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],(t[i-1])+((1/2)+(np.sqrt(3)/6))*dt,functioncalls,timers) 
-            
-            U,functioncalls,timers=propagator(select,Ht1,Ht2,dt,dr,phi,functioncalls,timers)
-            U=np.real(U)
-            C_new=np.dot(U,C)
-            P_new=np.zeros_like(P)
-            for u in range(0,len(P_new)):
-                for v in range(0,len(P_new)) :
-                    for p in range(0,len(P_new)-1) :
-                        P_new[u][v] += C_new[u][p]*C_new[v][p]
-                    P_new[u][v] *=2
-            with objmode(et='f8'):
-                et=time.time()
-        case _:
-            raise TypeError("Invalid propagator")
-    functioncalls[21]+=1
+                KS_t1=((1+(1/2)-(np.sqrt(3)/6))*KS)-(((1/2)-(np.sqrt(3)/6))*KS_prev)
+                KS_t2=((1+(1/2)+(np.sqrt(3)/6))*KS)-(((1/2)+(np.sqrt(3)/6))*KS_prev)
+            U,functioncalls,timers=propagator(select,KS_t1,KS_t2,dt,functioncalls,timers)
+    P_new=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+    KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+    with objmode(et='f8'):
+        et=time.time()
+    functioncalls[20]+=1
     timers['propagatetimes']=np.append(timers['propagatetimes'],et-st)
-    return np.real(P_new),et-st,functioncalls,timers
+    return P_new,KS_new,timers
 
-def converge_P(P,U):
-    e_crit=1e-6
-    U_dag = np.matrix.transpose(np.array(U,dtype='float64'))
-    P_temp=np.zeros_like(P)
-    print(U)
-    print(U_dag)
-    print(P)
-    for i in range(0,100):
-        P_temp = np.matmul(U_dag,np.matmul(P,U))  
-        print("iteration : ", i+1, "\n")   # the convergence of the SCF cycle. These may be commented out
-        print("Density matrix : ","\n", P_temp, "\n") 
-        if np.all((P-P_temp)<=e_crit)==True:
-            break
-        P=P_temp
+def propagate_KSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
+    match select:
+        case 'CN':
+            if i==0:
+                KS_half_p=KS
+            else:
+                KS_half_p=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS_half_p,0,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                P_half=(P_next+P)/2
+                KS_half_c,functioncalls,timers=GetKS(P_half,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_half_p-KS_half_c)<=1e-6)==True:
+                    break
+                else:
+                    KS_half_p=KS_half_c
+            U,functioncalls,timers=propagator(select,KS_half_c,0,dt,functioncalls,timers)
+        case 'EM':
+            if i==0:
+                KS_half_p=KS
+            else:
+                KS_half_p=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS_half_p,0,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                P_half=(P_next+P)/2
+                KS_half_c,functioncalls,timers=GetKS(P_half,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_half_p-KS_half_c)<=1e-6)==True:
+                    break
+                else:
+                    KS_half_p=KS_half_c
+            U,functioncalls,timers=propagator(select,KS_half_c,0,dt,functioncalls,timers)
+        case 'ETRS':
+            if i==0:
+                KS_half_p=KS
+            else:
+                KS_half_p=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS_half_p,0,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                P_half=(P_next+P)/2
+                KS_half_c,functioncalls,timers=GetKS(P_half,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_half_p-KS_half_c)<=1e-6)==True:
+                    break
+                else:
+                    KS_half_p=KS_half_c
 
-    return P_temp
+            U,functioncalls,timers=propagator(select,KS_half_c,0,dt,functioncalls,timers)
+            P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_next,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,KS,KS_next,dt,functioncalls,timers)
+            
+        case 'AETRS':
+            if i==0:
+                print('Note: AETRS with PC algorithm is referred to as CAETRS, which can be selected.')
+                KS_next_p=KS
+            else:
+                KS_next_p=((2)*KS)-(1*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS,KS_next_p,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                KS_next_c,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_next_p-KS_next_c)<=1e-6)==True:
+                    break
+                else:
+                     KS_next_p=KS_next_c
+            U,functioncalls,timers=propagator(select,KS,KS_next_c,dt,functioncalls,timers)
+        case 'CAETRS':
+            if i==0:
+                KS_next_p=KS
+            else:
+                KS_next_p=((2)*KS)-(1*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS,KS_next_p,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                KS_next_c,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_next_p-KS_next_c)<=1e-6)==True:
+                    break
+                else:
+                     KS_next_p=KS_next_c
+            U,functioncalls,timers=propagator(select,KS,KS_next_c,dt,functioncalls,timers)
+        case 'CFM4':
+            if i==0:
+                print('Warning: CFM4 does not have PC algorithm, running without...')
+                KS_t1=KS
+                KS_t2=KS
+            else:
+                KS_t1=((1+(1/2)-(np.sqrt(3)/6))*KS)-(((1/2)-(np.sqrt(3)/6))*KS_prev)
+                KS_t2=((1+(1/2)+(np.sqrt(3)/6))*KS)-(((1/2)+(np.sqrt(3)/6))*KS_prev)
+            U,functioncalls,timers=propagator(select,KS_t1,KS_t2,dt,functioncalls,timers)
+
+    P_new=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+    KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+    return P_new,KS_new,timers
+
+def propagate_noKSPC_PPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
+    match select:
+        case 'CN':
+            if i==0:
+                KS_half=KS
+            else:
+                KS_half=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS_half,0,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'EM':
+            if i==0:
+                KS_half=KS
+            else:
+                KS_half=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS_half,0,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'ETRS':
+            if i==0:
+                KS_half=KS
+            else:
+                KS_half=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS_half,0,dt,functioncalls,timers)
+            P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_next,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,KS,KS_next,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'AETRS':
+            if i==0:
+                KS_next=KS
+            else:
+                KS_next=((2)*KS)-(1*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            U,functioncalls,timers=propagator(select,KS,KS_next,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'CAETRS':
+            raise TypeError("CAETRS is not available without PC algorithm")
+        case 'CFM4':
+            if i==0:
+                KS_t1=KS
+                KS_t2=KS
+            else:
+                KS_t1=((1+(1/2)-(np.sqrt(3)/6))*KS)-(((1/2)-(np.sqrt(3)/6))*KS_prev)
+                KS_t2=((1+(1/2)+(np.sqrt(3)/6))*KS)-(((1/2)+(np.sqrt(3)/6))*KS_prev)
+            U,functioncalls,timers=propagator(select,KS_t1,KS_t2,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+
+    KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+    return P_new,KS_new,timers
+
+def propagate_KSPC_PPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
+    with objmode(st='f8'):
+        st=time.time()
+    match select:
+        case 'CN':
+            if i==0:
+                KS_half_p=KS
+            else:
+                KS_half_p=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS_half_p,0,dt,functioncalls,timers)
+                P_next=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+                P_half=np.real((P_next+P)/2)
+                KS_half_c,functioncalls,timers=GetKS(P_half,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_half_p-KS_half_c)<=1e-6)==True:
+                    break
+                else:
+                    KS_half_p=KS_half_c
+            U,functioncalls,timers=propagator(select,KS_half_c,0,dt,functioncalls,timers)
+            P_new_p=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'EM':
+            if i==0:
+                KS_half_p=KS
+            else:
+                KS_half_p=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS_half_p,0,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                P_half=np.real((P_next+P)/2)
+                KS_half_c,functioncalls,timers=GetKS(P_half,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_half_p-KS_half_c)<=1e-6)==True:
+                    break
+                else:
+                    KS_half_p=KS_half_c
+            U,functioncalls,timers=propagator(select,KS_half_c,0,dt,functioncalls,timers)
+            P_new_p=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'ETRS':
+            if i==0:
+                KS_half_p=KS
+            else:
+                KS_half_p=((1.5)*KS)-(0.5*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS_half_p,0,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                P_half=(P_next+P)/2
+                KS_half_c,functioncalls,timers=GetKS(P_half,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_half_p-KS_half_c)<=1e-6)==True:
+                    break
+                else:
+                    KS_half_p=KS_half_c
+
+            U,functioncalls,timers=propagator(select,KS_half_c,0,dt,functioncalls,timers)
+            P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_next,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,KS,KS_next,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'AETRS':
+            if i==0:
+                print('Note: AETRS with PC algorithm is referred to as CAETRS, which can be selected.')
+                KS_next_p=KS
+            else:
+                KS_next_p=((2)*KS)-(1*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS,KS_next_p,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                KS_next_c,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_next_p-KS_next_c)<=1e-6)==True:
+                    break
+                else:
+                     KS_next_p=KS_next_c
+            U,functioncalls,timers=propagator(select,KS,KS_next_c,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'CAETRS':
+            if i==0:
+                KS_next_p=KS
+            else:
+                KS_next_p=((2)*KS)-(1*KS_prev) # might need changing (paper uses KS_{N+1/2}=2KS_{N}-KS_{N-1/2})
+            for i in range(0,100):
+                U,functioncalls,timers=propagator(select,KS,KS_next_p,dt,functioncalls,timers)
+                P_next=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                KS_next_c,functioncalls,timers=GetKS(P_next,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+                if np.all(abs(KS_next_p-KS_next_c)<=1e-6)==True:
+                    break
+                else:
+                     KS_next_p=KS_next_c
+            U,functioncalls,timers=propagator(select,KS,KS_next_c,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+        case 'CFM4':
+            if i==0:
+                print('Warning: CFM4 does not have PC algorithm, running without...')
+                KS_t1=KS
+                KS_t2=KS
+            else:
+                KS_t1=((1+(1/2)-(np.sqrt(3)/6))*KS)-(((1/2)-(np.sqrt(3)/6))*KS_prev)
+                KS_t2=((1+(1/2)+(np.sqrt(3)/6))*KS)-(((1/2)+(np.sqrt(3)/6))*KS_prev)
+            U,functioncalls,timers=propagator(select,KS_t1,KS_t2,dt,functioncalls,timers)
+            P_new_p=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+            KS_new_p,functioncalls,timers=GetKS(P_new_p,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+            for i in range(0,100):
+                U=functioncalls,timers=propagator(select,((KS_new_p+KS)/2),0,dt,functioncalls,timers)
+                P_new_c=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
+                if np.all(abs(P_new_p-P_new_c)<=1e-6)==True:
+                    break
+                else:
+                    P_new_p=P_new_c
+            P_new=P_new_c
+
+    P_new=np.real(np.dot(U,np.dot(P,np.conj(np.transpose(U)))))
+    KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+    with objmode(et='f8'):
+        et=time.time()
+    functioncalls[20]+=1
+    timers['propagatetimes']=np.append(timers['propagatetimes'],et-st)
+    return np.real(P_new),np.real(KS_new),timers
 
 @njit(cache=True)
 def transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers) :
@@ -1215,7 +1385,9 @@ def TimingsTable(timers):
 
 def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,**kwargs):
     TimingsTableSelect = kwargs.get('Timings', False)
-    
+    PPCselect=kwargs.get('PPC',False)
+    KSPCselect=kwargs.get('KSPC',False)
+
     with objmode(st='f8'):
         st=time.time()
     # Ground state stuff
@@ -1288,11 +1460,13 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
 
     # Performing calculation of all constant variables to remove the need to repeat it multiple times.
     Z_I,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,Cpp,rPP,alpha_PP,V_NL,functioncalls,timers=dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers)
+    D_x,D_y,D_z,D_tot,functioncalls,timers=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers)
 
     print('Ground state calculations:\n')
     # Compute the ground state first
     P,H,C,KS,functioncalls,timers=computeDFT_first(R_I,L,N_i,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,basis_filename,functioncalls,timers)
     # initialising all variable arrays
+    mu_const=np.trace(np.dot(D_tot,P))
     Pgs=P
     energies=[]
     mu=[]
@@ -1316,45 +1490,51 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
 
     # time array can be set now
     t=np.arange(0,nsteps*dt,dt)
-
+    KS_prev=np.zeros_like(KS)
     for i in range(0,nsteps):
         print('--------------------------------------------------------------------\nPropagation timestep: '+str(i+1))
         #Applying perturbation
         KS,E_app,functioncalls,timers=GaussianKick(KS,kickstrength,kickdirection,t[i],r_x,r_y,r_z,phi,dr,P,functioncalls,timers)
-        KohnSham[i]=KS
-        print(KS)
+        #KohnSham[i]=KS
+        #print(KS)
         #Getting perturbed density matrix
         P,functioncalls,timers=GetP(KS,S,functioncalls,timers)
         # Propagating depending on method.
         # AETRS, CAETRS and CFM4 require 2 prior timesteps, which use ETRS
-        if i<2 and propagator==('AETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        elif i<2 and propagator==('CAETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        elif i<2 and propagator==('CFM4'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        elif i>1 and propagator==('AETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        elif i>1 and propagator==('CAETRS'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        elif i>1 and propagator==('CFM4'):
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        else:
-            P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        print('\nPropagation time: '+str(proptime))
+        #if i<2 and propagator==('AETRS'):
+        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        #elif i<2 and propagator==('CAETRS'):
+        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        #elif i<2 and propagator==('CFM4'):
+        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        #elif i>1 and propagator==('AETRS'):
+        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        #elif i>1 and propagator==('CAETRS'):
+        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        #elif i>1 and propagator==('CFM4'):
+        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        #else:
+        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        if PPCselect==False and KSPCselect==False:
+            P,KS,timers=propagate_noKSPC_noPPC(P,KS,KS_prev,propagator,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+        if PPCselect==False and KSPCselect==True:
+            P,KS,timers=propagate_KSPC_noPPC(P,KS,KS_prev,propagator,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+        if PPCselect==True and KSPCselect==False:
+            P,KS,timers=propagate_noKSPC_PPC(P,KS,KS_prev,propagator,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+        if PPCselect==True and KSPCselect==True:
+            P,KS,timers=propagate_KSPC_PPC(P,KS,KS_prev,propagator,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
 
-        KS,functioncalls,timers=GetKS(P,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+        print('\nPropagation time: '+str(timers['propagatetimes'][i]))
+
+        #KS,functioncalls,timers=GetKS(P,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
         # Converging on accurate KS and P
-        print(KS)
+        
         #P,H,C,KS,functioncalls,timers=computeDFT(R_I,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         H,functioncalls,timers=computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         # Information Collection
-        D_x,D_y,D_z,D_tot,functioncalls,timers=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers)
-        mu_const=0
-        for i in range(0,len(elements)):
-            for j in range(0,len(R_I[0])):
-                mu_const+=Z_I[i]*R_I[i][j]
-
+        print("total energy : ", np.real(H), "\n")   # the convergence of the SCF cycle. These may be commented out
+        print("density matrix : ","\n", P, "\n")       # if required.
+        print("KS matrix : ","\n", KS, "\n")
         mu_t=mu_const-np.trace(np.dot(D_tot,P))
         mu_x=np.trace(np.dot(D_x,P))
         mu_y=np.trace(np.dot(D_y,P))
@@ -1371,7 +1551,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
         mux.append(mu_x)
         muy.append(mu_y)
         muz.append(mu_z)
-        propagationtimes.append(proptime)
+        propagationtimes.append(timers['propagatetimes'][i])
         # Saving data to external files every 10 steps
         if  i>0 and (i+1)%10==0:
             with NpyAppendArray(projectname+'/'+projectname+'_energies.npy') as npaa:
@@ -1390,11 +1570,12 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
                 npaa.append(np.array(EPinit[i-9:i+1]))
 
         # Outputting calculated data
-        print("Total energy : ", np.real(H), "\n")   # the convergence of the SCF cycle. These may be commented out
+      
         print('Total dipole moment: '+str(mu_t))
         #print('Shannon entropy: '+str(SE[i]))
         #print('von Neumann Entropy: '+str(vNE[i]))
         #print('P_init Basis Entropy: '+str(EPinit[i]))
+        KS_prev=KS
 
     with objmode(et='f8'):
          et=time.time()
@@ -1414,7 +1595,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
 nsteps=100
 timestep=0.1
 SCFiterations=100
-kickstrength=2e-5
+kickstrength=1e-3
 kickdirection=np.array([1,0,0])
 proptype='CFM4'
 projectname='CFM4run'
@@ -1429,12 +1610,12 @@ elements = ['He','H']
 basis_filename='BASIS_MOLOPT'
 basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
 
-t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True)
+t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True,PPCselect=False,KSPCselect=False)
 
 
 #%%
 # Post-Processing section
-#%%
+
 # Energy plot
 plt.plot(t,np.array(energies))
 plt.xlabel('Time, $s$')
@@ -1447,11 +1628,13 @@ plt.xlabel('Time, $s$')
 plt.ylabel('Dipole moment, $\mu$')
 #plt.xlim([0.8, 1.8])
 #plt.ylim([0.35352,0.35356])
+
 #%% Padded dipole moment plot
 mu_padded=np.append(np.array(mu),np.ones(2000-nsteps)*(np.mean(mu)))
 t_padded=np.arange(0,2000*timestep,timestep)*2.418e-17
 plt.plot(t_padded,mu_padded)
 #plt.xlim([0.6, 1.2])
+
 #%%
 # Absorption Spectrum plot
 filterpercentage=0
@@ -1469,6 +1652,7 @@ plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
 plt.xlim([-1e-9, 0.4e-7])
+
 #%%
 # Padded Absorption Spectrum plot
 filterpercentage=0
@@ -1481,12 +1665,9 @@ freq = scipy.fft.rfftfreq(mu_padded.size,(0.1*2.4188843265857e-17))
 freqshift=scipy.fft.fftshift(freq)
 ld=c/freq
 en=h*freq
-plt.plot(ld,np.abs(sp))
+plt.plot(ld[:100],np.abs(sp)[:100])
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
-plt.xlim([-1e-8, 5e-7])
-# %%
-#Timings table
-
+#plt.xlim([0,])
 
 # %%

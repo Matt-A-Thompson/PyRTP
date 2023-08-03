@@ -42,6 +42,8 @@ def propagator(select,H1,H2,dt,functioncalls,timers): #propagator functions
     return U,functioncalls,timers
 
 def propagate_noKSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
+    with objmode(st='f8'):
+        st=time.time()
     match select:
         case 'CN':
             if i==0:
@@ -82,6 +84,10 @@ def propagate_noKSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z
             U,functioncalls,timers=propagator(select,KS_t1,KS_t2,dt,functioncalls,timers)
     P_new=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
     KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
+    with objmode(et='f8'):
+        et=time.time()
+    functioncalls[20]+=1
+    timers['propagatetimes']=np.append(timers['propagatetimes'],et-st)
     return P_new,KS_new,timers
 
 def propagate_KSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
