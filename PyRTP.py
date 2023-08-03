@@ -597,8 +597,6 @@ def element_interpreter(elements):
             elif orbitals[i][j]=='P':
                 tot_orbitals+=3
     
-    print(orbitals)
-    print(tot_orbitals)
     return np.array(Z_I),orbitals,tot_orbitals
 
 def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
@@ -612,7 +610,6 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     r_x,r_y,r_z,N,dr,functioncalls,timers=GridCreate(L,N_i,functioncalls,timers)
     phi = np.zeros(tot_orbitals*N).reshape(tot_orbitals,N_i,N_i,N_i)
     k=0
-    print(orbitals)
     for i in range(0,len(elements)):
         atomorbitals=0
         for I in range(0,3):
@@ -623,7 +620,6 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
         
         l=0
         alpha_temp,coef_temp,functioncalls,timers = CP2K_basis_set_data(basis_filename,elements[i],basis_sets[i],atomorbitals,functioncalls,timers)
-        print(coef_temp.shape)
         for j in range(0,len(orbitals[i])):
             if orbitals[i][j]=='':
                 continue
@@ -644,7 +640,6 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
                 
 
     phi=normalise_basis_set(phi,dr)
-    print(phi.shape)
     G_u = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     G_v = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     G_w = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
@@ -769,81 +764,9 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
     timers['computeDFTtimes']=np.append(timers['computeDFTtimes'],et-st)
     return P,np.real(E_0),C,KS,functioncalls,timers
 
-def computeDFT(R_I,L,N_i,P_init,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers):
-    # This function performs conventional ground-state DFT to produce a converged ground state electron density, wavefunction, energy and Kohn-Sham orbitals.
-    # The 'DFTsetup' function must be called prior to calling this function.
-    with objmode(st='f8'):
-        st=time.time()
-    P = P_init
-    n_el_r, n_el_r_tot,functioncalls,timers  = calculate_realspace_density(phi,N,N_i,P,dr,functioncalls,timers)
-    n_c_r,functioncalls,timers = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,timers)
-    n_r = n_el_r + n_c_r
-    T,functioncalls,timers = energy_calculation(delta_T,P,functioncalls,timers)
-    n_G = np.fft.fftn(n_r)
-    V_G, E_hart_G,functioncalls,timers = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncalls,timers)
-    V_r = np.fft.ifftn(V_G)
-    V_hart,functioncalls,timers = grid_integration(V_r,dr,phi,functioncalls,timers)
-    E_hart_r,functioncalls,timers = calculate_hartree_real(V_r,n_r,dr,functioncalls,timers)
-    V_XC_r,E_XC,functioncalls,timers = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,timers)
-    V_XC,functioncalls,timers = grid_integration(V_XC_r,dr,phi,functioncalls,timers)
-    V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
-    V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
-    E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
-    KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
-    KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
-    S=Matrix(S)
-    U,s = S.diagonalize()
-    s = s**(-0.5)
-    X = np.matmul(np.array(U,dtype='float64'),np.array(s,dtype='float64'))
-    X_dag = np.matrix.transpose(np.array(X,dtype='float64'))
-    err = 1.0e-6 #The error margin by which convergence of the P matrix is measured
-
-    P = P_init #reset P to atomic guess.
-    for I in range(0,iterations):
-        n_el_r, n_el_r_tot,functioncalls,timers  = calculate_realspace_density(phi,N,N_i,P,dr,functioncalls,timers)
-        n_c_r,functioncalls,timers = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,timers)
-        n_r = n_el_r + n_c_r
-        n_G = np.fft.fftn(n_r)
-        V_G, E_hart_G,functioncalls,timers = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncalls,timers)
-        V_r = np.fft.ifftn(V_G)
-        V_hart,functioncalls,timers = grid_integration(V_r,dr,phi,functioncalls,timers)
-        E_hart_r,functioncalls,timers = calculate_hartree_real(V_r,n_r,dr,functioncalls,timers)
-        V_XC_r,E_XC,functioncalls,timers = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,timers)
-        V_XC,functioncalls,timers = grid_integration(V_XC_r,dr,phi,functioncalls,timers)
-        V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
-        V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
-        E_SR,functioncalls,timers = energy_calculation(V_SR,P,functioncalls,timers)
-        E_NL,functioncalls,timers=energy_calculation(V_NL,P,functioncalls,timers)
-        T,functioncalls,timers = energy_calculation(delta_T,P,functioncalls,timers)
-        E_0 = E_hart_r + E_XC + E_SR + T + E_self + E_II + E_NL
-        KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
-        KS = np.real(KS)
-        KS_temp = Matrix(np.matmul(X_dag,np.matmul(KS,X)))
-        C_temp, e = KS_temp.diagonalize()
-        C = np.matmul(X,C_temp)
-        print("iteration : ", I+1, "\n")               # This outputs various information for the user to monitor
-        print("total energy : ", np.real(E_0), "\n")   # the convergence of the SCF cycle. These may be commented out
-        print("density matrix : ","\n", P, "\n")       # if required.
-        print("KS matrix : ","\n", KS, "\n")
-        P_new=np.zeros_like(P_init)
-        for u in range(0,2):
-            for v in range(0,2) :
-                for p in range(0,1) :
-                    P_new[u][v] += C[u][p]*C[v][p]
-                P_new[u][v] *=2
-        if np.all(abs(P-P_new)<= err)==True:
-            break
-                
-        P = P_new 
-    with objmode(et='f8'):
-         et=time.time()
-    functioncalls[18]+=1
-    timers['computeDFTtimes']=np.append(timers['computeDFTtimes'],et-st)
-    return P,np.real(E_0),C,KS,functioncalls,timers
-
 # GaussianKick - provides energy to the system in the form of an electric pulse
 # with a Gaussian envelop (run each propagation step!)
-def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,functioncalls,timers):
+def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,P,functioncalls,timers):
     with objmode(st='f8'):
         st=time.time()
 
@@ -856,18 +779,20 @@ def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,functioncalls,timers):
     D_x,D_y,D_z,D_tot,functioncalls,timers=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers)
     V_app=-(np.dot(D_x,Efield[0])+np.dot(D_y,Efield[1])+np.dot(D_z,Efield[2]))
     KS_new=KS+V_app
+    E_app,functioncalls,timers=energy_calculation(V_app,P,functioncalls,timers)
     with objmode(et='f8'):
          et=time.time()
     functioncalls[19]+=1
     timers['GaussianKicktimes']=np.append(timers['GaussianKicktimes'],et-st)
-    return KS_new,functioncalls,timers
+    return KS_new,E_app,functioncalls,timers
 
 # Propagator - this function selects the equation to determine the unitary operator to propagate 
 # the system forward in time a singular timestep, using predictor-corrector regime (if applicable)
 # This function uses a match-case statement, hence the need for Python 3.10 or greater.
-def propagator(select,H1,H2,dt,functioncalls,timers): #propagator functions
+def propagator(select,H1,H2,dt,dr,phi,functioncalls,timers): #propagator functions
     with objmode(st='f8'):
         st=time.time()
+    
     match select:
         case 'CN':
             U=(1-(1j*(dt/2)*H1))/(1+(1j*(dt/2)*H1))
@@ -901,13 +826,13 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             # This is the predicting section
             if i==0:
                 H_p=H
-            elif i>0 and i<5:
+            elif i>0 and i<3:
                 H_p,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2),functioncalls,timers)  # LagrangeExtrapolate fits a curve to the previous set of energies
                                                                                                                                                           # and extrapolates based on that. It is important that the number of
             else:                                                                                                                                         # points be limited so as not to cause instability.
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2),functioncalls,timers)  
+                H_p,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],t[i-1]+(1/2),functioncalls,timers)  
 
-            U,functioncalls,timers=propagator(select,H_p,[],dt,functioncalls,timers) # calling the propagtor function to determine the unitary operator U.
+            U,functioncalls,timers=propagator(select,H_p,[],dt,dr,phi,functioncalls,timers) # calling the propagtor function to determine the unitary operator U.
             U=np.real(U)
             C_p=np.dot(U,C)
             # This is the updating section
@@ -920,7 +845,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
-            U,functioncalls,timers=propagator(select,H_c,[],dt,functioncalls,timers) # After the predictor-corrector regime, the unitary operator U is likely more accurate.
+            U,functioncalls,timers=propagator(select,H_c,[],dt,dr,phi,functioncalls,timers) # After the predictor-corrector regime, the unitary operator U is likely more accurate.
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -938,11 +863,11 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             # This is the predicting section
             if i==0:
                 H_p=H
-            elif i>0 and i<5:
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2),functioncalls,timers)  
+            elif i>0 and i<3:
+                H_p,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(dt/2),functioncalls,timers)  
             else:
-                H_p,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2),functioncalls,timers)    
-            U,functioncalls,timers=propagator(select,H_p,[],dt,functioncalls,timers)
+                H_p,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],t[i-1]+(dt/2),functioncalls,timers)    
+            U,functioncalls,timers=propagator(select,H_p,[],dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_p=np.dot(U,C)
             # This is the updating section
@@ -955,7 +880,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
-            U,functioncalls,timers=propagator(select,H_c,[],dt,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,H_c,[],dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -979,7 +904,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
                 H_p,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],t[i-1]+(1/2),functioncalls,timers) 
             else:
                 H_p,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],t[i-1]+(1/2),functioncalls,timers)     
-            U,functioncalls,timers=propagator('EM',H_p,[],dt,functioncalls,timers)
+            U,functioncalls,timers=propagator('EM',H_p,[],dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_p=np.dot(U,C)
             # This is the updating section of the EM propagator
@@ -992,7 +917,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             E_0,functioncalls,timers=computeE_0(R_I,Z_I,P_p,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # This is the correcting section of the EM propagator
             H_c=H+(1/2)*(E_0-H)
-            U,functioncalls,timers=propagator('EM',H_c,[],dt,functioncalls,timers)
+            U,functioncalls,timers=propagator('EM',H_c,[],dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -1005,7 +930,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             # the 'computeE_0' function can be called to determine the energy at the next timestep.
             Hdt,functioncalls,timers=computeE_0(R_I,Z_I,P_new,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
             # The ETRS propagator can now be called
-            U,functioncalls,timers=propagator(select,H,Hdt,dt,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,H,Hdt,dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -1025,7 +950,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
                 Hdt,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],tnew,functioncalls,timers) 
             else:
                 Hdt,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew,functioncalls,timers)   
-            U,functioncalls,timers=propagator(select,H,Hdt,dt,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,H,Hdt,dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -1048,7 +973,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             else:
                 Hdt,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],tnew,functioncalls,timers) 
             # This is the updating section
-            U,functioncalls,timers=propagator(select,H,Hdt,dt,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,H,Hdt,dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_p=np.dot(U,C)
             P_p=np.zeros_like(P)
@@ -1061,7 +986,7 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             # This is the correcting section
             H_c=H+(1/2)*(E_0-H)
             Hdt=2*H_c-Hprev
-            U,functioncalls,timers=propagator(select,H_c,Hdt,dt,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,H_c,Hdt,dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -1077,14 +1002,14 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             # provide an accurate and efficient approximation of the unitary operator. This method is preferred.
             with objmode(st='f8'):
                 st=time.time()
-            if i<5:
-                Ht1,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)-(np.sqrt(3)/6)),functioncalls,timers)
-                Ht2,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)+(np.sqrt(3)/6)),functioncalls,timers) 
+            if i<3:
+                Ht1,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)-(np.sqrt(3)/6))*dt,functioncalls,timers)
+                Ht2,functioncalls,timers=LagrangeExtrapolate(t[0:i],energies[0:i],(t[i-1])+((1/2)+(np.sqrt(3)/6))*dt,functioncalls,timers) 
             else:
-                Ht1,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],(t[i-1])+((1/2)-(np.sqrt(3)/6)),functioncalls,timers)
-                Ht2,functioncalls,timers=LagrangeExtrapolate(t[i-5:i],energies[i-5:i],(t[i-1])+((1/2)+(np.sqrt(3)/6)),functioncalls,timers) 
+                Ht1,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],(t[i-1])+((1/2)-(np.sqrt(3)/6))*dt,functioncalls,timers)
+                Ht2,functioncalls,timers=LagrangeExtrapolate(t[i-3:i],energies[i-3:i],(t[i-1])+((1/2)+(np.sqrt(3)/6))*dt,functioncalls,timers) 
             
-            U,functioncalls,timers=propagator(select,Ht1,Ht2,dt,functioncalls,timers)
+            U,functioncalls,timers=propagator(select,Ht1,Ht2,dt,dr,phi,functioncalls,timers)
             U=np.real(U)
             C_new=np.dot(U,C)
             P_new=np.zeros_like(P)
@@ -1099,7 +1024,24 @@ def propagate(R_I,Z_I,P,H,C,dt,select,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta
             raise TypeError("Invalid propagator")
     functioncalls[21]+=1
     timers['propagatetimes']=np.append(timers['propagatetimes'],et-st)
-    return P_new,et-st,functioncalls,timers
+    return np.real(P_new),et-st,functioncalls,timers
+
+def converge_P(P,U):
+    e_crit=1e-6
+    U_dag = np.matrix.transpose(np.array(U,dtype='float64'))
+    P_temp=np.zeros_like(P)
+    print(U)
+    print(U_dag)
+    print(P)
+    for i in range(0,100):
+        P_temp = np.matmul(U_dag,np.matmul(P,U))  
+        print("iteration : ", i+1, "\n")   # the convergence of the SCF cycle. These may be commented out
+        print("Density matrix : ","\n", P_temp, "\n") 
+        if np.all((P-P_temp)<=e_crit)==True:
+            break
+        P=P_temp
+
+    return P_temp
 
 @njit(cache=True)
 def transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers) :
@@ -1142,10 +1084,33 @@ def GetP(KS,S,functioncalls,timers):
     timers['getptimes']=np.append(timers['getptimes'],et-st)
     return P_new,functioncalls,timers
 
+def GetKS(P,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
+    n_el_r, n_el_r_tot,functioncalls,timers  = calculate_realspace_density(phi,N,N_i,P,dr,functioncalls,timers)
+    n_c_r,functioncalls,timers = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,timers)
+    n_r = n_el_r + n_c_r
+    n_G = np.fft.fftn(n_r)
+    V_G, E_hart_G,functioncalls,timers = calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncalls,timers)
+    V_r = np.fft.ifftn(V_G)
+    V_hart,functioncalls,timers = grid_integration(V_r,dr,phi,functioncalls,timers)
+    V_XC_r,E_XC,functioncalls,timers = calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,timers)
+    V_XC,functioncalls,timers = grid_integration(V_XC_r,dr,phi,functioncalls,timers)
+    V_SR_r,functioncalls,timers = calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers)
+    V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
+    KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
+    KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
+
+    return KS,functioncalls,timers
+
 def LagrangeExtrapolate(t,H,tnew,functioncalls,timers):
     # This function performs Lagrange extrapolation (see Scipy documentation for details).
     with objmode(st='f8'):
         st=time.time()
+    #val=np.zeros_like(H[0])
+    #H_temp=np.zeros(len(H))
+    #for i in range(0,len(H[0])):
+        #for j in range(0,len(H[0])):
+            #for k in range(0,len(H)):
+                #H_temp[k]=H[k][i][j]
     f=lagrange(t,H)
     val=np.real(f(tnew))
     with objmode(et='f8'):
@@ -1206,8 +1171,51 @@ def EntropyPInitBasis(P,Pini,functioncalls,timers):
     timers['PgsEtimes']=np.append(timers['PgsEtimes'],et-st)
     return EPinitBasis,functioncalls,timers
 
+def TimingsTable(timers):
 
-def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname):
+    print(''.ljust(73,'-'))
+    print('|'+'Timings Table'.center(71)+'|')
+    print(''.ljust(73,'-'))
+    print('| '+'Function'.ljust(30)+'|'+'Function Calls'.center(19)+'|'+ 'Average run time'.center(19)+'|')
+    print(''.ljust(73,'-'))
+    print('| '+'GridCreate'.ljust(30)+'|'+str(len(timers['GridCreatetimes'])).center(19)+'|'+ str(np.round(np.mean(timers['GridCreatetimes']),13)).center(19)+'|')
+    print('| '+'construct_GTOs'.ljust(30)+'|'+str(len(timers['constructGTOstimes'])).center(19)+'|'+ str(np.round(np.mean(timers['constructGTOstimes']),13)).center(19)+'|')
+    print('| '+'construct_CGF'.ljust(30)+'|'+str(len(timers['constructCGFtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['constructCGFtimes']),13)).center(19)+'|')
+    #print('| '+'CP2K_basis_set_data'.ljust(30)+'|'+str(functioncalls[3]).center(19)+'|'+ str(np.round(np.mean(basissettimes),13)).center(19)+'|')
+    print('| '+'calculate_realspace_density'.ljust(30)+'|'+str(len(timers['calculaterealspacedensitytimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculaterealspacedensitytimes']),13)).center(19)+'|')
+    print('| '+'calculate_core_density'.ljust(30)+'|'+str(len(timers['calculatecoredensitytimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculatecoredensitytimes']),13)).center(19)+'|')
+    print('| '+'grid_integration'.ljust(30)+'|'+str(len(timers['gridintegrationtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['gridintegrationtimes']),13)).center(19)+'|')
+    print('| '+'energy_calculation'.ljust(30)+'|'+str(len(timers['energycalculationtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['energycalculationtimes']),13)).center(19)+'|')
+    print('| '+'calculate_overlap'.ljust(30)+'|'+str(len(timers['calculateoverlaptimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculateoverlaptimes']),13)).center(19)+'|')
+    print('| '+'calculate_kinetic_derivative'.ljust(30)+'|'+str(len(timers['calculatekineticderivativetimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculatekineticderivativetimes']),13)).center(19)+'|')
+    print('| '+'calculate_hartree_reciprocal'.ljust(30)+'|'+str(len(timers['calculatehartreereciprocaltimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculatehartreereciprocaltimes']),13)).center(19)+'|')
+    print('| '+'calculate_hartree_real'.ljust(30)+'|'+str(len(timers['calculatehartreerealtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculatehartreerealtimes']),13)).center(19)+'|')
+    print('| '+'calculate_XC'.ljust(30)+'|'+str(len(timers['calculateXCtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculateXCtimes']),13)).center(19)+'|')
+    print('| '+'calculate_V_SR_r'.ljust(30)+'|'+str(len(timers['calculateVSRtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculateVSRtimes']),13)).center(19)+'|')
+    print('| '+'calculate_self_energy'.ljust(30)+'|'+str(len(timers['calculateselfenergytimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculateselfenergytimes']),13)).center(19)+'|')
+    print('| '+'calculate_Ion_interation'.ljust(30)+'|'+str(len(timers['calculateIItimes'])).center(19)+'|'+ str(np.round(np.mean(timers['calculateIItimes']),13)).center(19)+'|')
+    print('| '+'dftSetup'.ljust(30)+'|'+str(len(timers['DFTsetuptimes'])).center(19)+'|'+ str(np.round(np.mean(timers['DFTsetuptimes']),13)).center(19)+'|')
+    print('| '+'computeE_0'.ljust(30)+'|'+str(len(timers['computeE0times'])).center(19)+'|'+ str(np.round(np.mean(timers['computeE0times']),13)).center(19)+'|')
+    print('| '+'computeDFT'.ljust(30)+'|'+str(len(timers['computeDFTtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['computeDFTtimes']),13)).center(19)+'|')
+    print('| '+'GaussianKick'.ljust(30)+'|'+str(len(timers['GaussianKicktimes'])).center(19)+'|'+ str(np.round(np.mean(timers['GaussianKicktimes']),13)).center(19)+'|')
+    print('| '+'propagator'.ljust(30)+'|'+str(len(timers['propagatortimes'])).center(19)+'|'+ str(np.round(np.mean(timers['propagatortimes']),13)).center(19)+'|')
+    print('| '+'propagate'.ljust(30)+'|'+str(len(timers['propagatetimes'])).center(19)+'|'+ str(np.round(np.mean(timers['propagatetimes']),13)).center(19)+'|')
+    print('| '+'transition_dipole_tensor'.ljust(30)+'|'+str(len(timers['tdttimes'])).center(19)+'|'+ str(np.round(np.mean(timers['tdttimes']),13)).center(19)+'|')
+    print('| '+'GetP'.ljust(30)+'|'+str(len(timers['getptimes'])).center(19)+'|'+ str(np.round(np.mean(timers['getptimes']),13)).center(19)+'|')
+    print('| '+'LagrangeExtrapolate'.ljust(30)+'|'+str(len(timers['LagrangeExtrapolatetimes'])).center(19)+'|'+ str(np.round(np.mean(timers['LagrangeExtrapolatetimes']),13)).center(19)+'|')
+    #print('| '+'pop_analysis'.ljust(30)+'|'+str(len()).center(19)+'|'+ str(np.round(np.mean(popanalysistimes),13)).center(19)+'|')
+    print('| '+'ShannonEntropy'.ljust(30)+'|'+str(len(timers['SEtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['SEtimes']),13)).center(19)+'|')
+    print('| '+'vonNeumannEntropy'.ljust(30)+'|'+str(len(timers['vNEtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['vNEtimes']),13)).center(19)+'|')
+    print('| '+'EntropyPInitBasis'.ljust(30)+'|'+str(len(timers['PgsEtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['PgsEtimes']),13)).center(19)+'|')
+    print('| '+'P_init_guess_calc'.ljust(30)+'|'+str(len(timers['P_initguesstimes'])).center(19)+'|'+ str(np.round(np.mean(timers['P_initguesstimes']),13)).center(19)+'|')
+    print('| '+'PP_coefs'.ljust(30)+'|'+str(len(timers['PP_coefstimes'])).center(19)+'|'+ str(np.round(np.mean(timers['PP_coefstimes']),13)).center(19)+'|')
+    print('| '+'rttddft'.ljust(30)+'|'+str(len(timers['RTTDDFTtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['RTTDDFTtimes']),13)).center(19)+'|')
+    print(''.ljust(73,'-'))
+
+
+def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,**kwargs):
+    TimingsTableSelect = kwargs.get('Timings', False)
+    
     with objmode(st='f8'):
         st=time.time()
     # Ground state stuff
@@ -1288,10 +1296,15 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     Pgs=P
     energies=[]
     mu=[]
+    mux=[]
+    muy=[]
+    muz=[]
     propagationtimes=[]
     SE=[]
     vNE=[]
     EPinit=[]
+    Kick=[]
+    KohnSham=np.zeros(nsteps*len(KS)**2).reshape(nsteps,len(KS),len(KS))
     # Writing a short .txt file giving the simulation parameters to the project folder.
     # This will fail if the directory already exists, as intended, to prevent data loss.
     os.mkdir(os.path.join(os.getcwd(),projectname))
@@ -1307,7 +1320,9 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     for i in range(0,nsteps):
         print('--------------------------------------------------------------------\nPropagation timestep: '+str(i+1))
         #Applying perturbation
-        KS,functioncalls,timers=GaussianKick(KS,kickstrength,kickdirection,t[i],r_x,r_y,r_z,phi,dr,functioncalls,timers)
+        KS,E_app,functioncalls,timers=GaussianKick(KS,kickstrength,kickdirection,t[i],r_x,r_y,r_z,phi,dr,P,functioncalls,timers)
+        KohnSham[i]=KS
+        print(KS)
         #Getting perturbed density matrix
         P,functioncalls,timers=GetP(KS,S,functioncalls,timers)
         # Propagating depending on method.
@@ -1326,14 +1341,26 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
             P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         else:
             P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        print('Propagation time: '+str(proptime))
+        print('\nPropagation time: '+str(proptime))
+
+        KS,functioncalls,timers=GetKS(P,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
         # Converging on accurate KS and P
+        print(KS)
         #P,H,C,KS,functioncalls,timers=computeDFT(R_I,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         H,functioncalls,timers=computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         # Information Collection
         D_x,D_y,D_z,D_tot,functioncalls,timers=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers)
-        mu_t=np.trace(np.dot(D_tot,P))
+        mu_const=0
+        for i in range(0,len(elements)):
+            for j in range(0,len(R_I[0])):
+                mu_const+=Z_I[i]*R_I[i][j]
+
+        mu_t=mu_const-np.trace(np.dot(D_tot,P))
+        mu_x=np.trace(np.dot(D_x,P))
+        mu_y=np.trace(np.dot(D_y,P))
+        mu_z=np.trace(np.dot(D_z,P))
         energies.append(H)
+        Kick.append(E_app)
         SEnow,functioncalls,timers=ShannonEntropy(P,functioncalls,timers)
         SE.append(SEnow)
         vNEnow,functioncalls,timers=vonNeumannEntropy(P,functioncalls,timers)
@@ -1341,6 +1368,9 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
         PgsEnow,functioncalls,timers=EntropyPInitBasis(P,Pgs,functioncalls,timers)
         EPinit.append(PgsEnow)
         mu.append(mu_t)
+        mux.append(mu_x)
+        muy.append(mu_y)
+        muz.append(mu_z)
         propagationtimes.append(proptime)
         # Saving data to external files every 10 steps
         if  i>0 and (i+1)%10==0:
@@ -1360,24 +1390,31 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
                 npaa.append(np.array(EPinit[i-9:i+1]))
 
         # Outputting calculated data
+        print("Total energy : ", np.real(H), "\n")   # the convergence of the SCF cycle. These may be commented out
         print('Total dipole moment: '+str(mu_t))
-        print('Shannon entropy: '+str(SE[i]))
-        print('von Neumann Entropy: '+str(vNE[i]))
-        print('P_init Basis Entropy: '+str(EPinit[i]))
+        #print('Shannon entropy: '+str(SE[i]))
+        #print('von Neumann Entropy: '+str(vNE[i]))
+        #print('P_init Basis Entropy: '+str(EPinit[i]))
 
     with objmode(et='f8'):
          et=time.time()
     functioncalls[31]+=1
     timers['RTTDDFTtimes']=np.append(timers['RTTDDFTtimes'],et-st)
+    print('--------------------------------------------------------------------\nSimulation complete!\n')
+    if len(kwargs)!=0:
+        print('Optional outputs:\n')
+    if TimingsTableSelect==True:
+        
+        TimingsTable(timers)
     
-    return t,energies,mu,propagationtimes,SE,vNE,EPinit,functioncalls,timers
+    return t,energies,mu,mux,muy,muz,propagationtimes,SE,vNE,EPinit,Kick,functioncalls,timers
 
 #%%
 # Simulation parameters
 nsteps=100
 timestep=0.1
 SCFiterations=100
-kickstrength=0.1
+kickstrength=2e-5
 kickdirection=np.array([1,0,0])
 proptype='CFM4'
 projectname='CFM4run'
@@ -1392,7 +1429,8 @@ elements = ['He','H']
 basis_filename='BASIS_MOLOPT'
 basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
 
-t,energies,mu,timings,SE,vNE,EPinit,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname)
+t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True)
+
 
 #%%
 # Post-Processing section
@@ -1407,12 +1445,13 @@ plt.ylabel('Energy, $Ha$')
 plt.plot(t,np.array(mu))
 plt.xlabel('Time, $s$')
 plt.ylabel('Dipole moment, $\mu$')
-
+#plt.xlim([0.8, 1.8])
+#plt.ylim([0.35352,0.35356])
 #%% Padded dipole moment plot
 mu_padded=np.append(np.array(mu),np.ones(2000-nsteps)*(np.mean(mu)))
 t_padded=np.arange(0,2000*timestep,timestep)*2.418e-17
 plt.plot(t_padded,mu_padded)
-
+#plt.xlim([0.6, 1.2])
 #%%
 # Absorption Spectrum plot
 filterpercentage=0
@@ -1445,46 +1484,9 @@ en=h*freq
 plt.plot(ld,np.abs(sp))
 plt.xlabel('Wavelength, $\lambda$')
 plt.ylabel('Intensity')
-plt.xlim([0, 5e-7])
+plt.xlim([-1e-8, 5e-7])
 # %%
 #Timings table
-print(''.ljust(73,'-'))
-print('|'+'Timings Table'.center(71)+'|')
-print(''.ljust(73,'-'))
-print('| '+'Function'.ljust(30)+'|'+'Function Calls'.center(19)+'|'+ 'Average run time'.center(19)+'|')
-print(''.ljust(73,'-'))
-print('| '+'GridCreate'.ljust(30)+'|'+str(functioncalls[0]).center(19)+'|'+ str(np.round(np.mean(GridCreatetimes),13)).center(19)+'|')
-print('| '+'construct_GTOs'.ljust(30)+'|'+str(functioncalls[1]).center(19)+'|'+ str(np.round(np.mean(constructGTOstimes),13)).center(19)+'|')
-print('| '+'construct_CGF'.ljust(30)+'|'+str(functioncalls[2]).center(19)+'|'+ str(np.round(np.mean(constructCGFtimes),13)).center(19)+'|')
-#print('| '+'CP2K_basis_set_data'.ljust(30)+'|'+str(functioncalls[3]).center(19)+'|'+ str(np.round(np.mean(basissettimes),13)).center(19)+'|')
-print('| '+'calculate_realspace_density'.ljust(30)+'|'+str(functioncalls[4]).center(19)+'|'+ str(np.round(np.mean(calculaterealspacedensitytimes),13)).center(19)+'|')
-print('| '+'calculate_core_density'.ljust(30)+'|'+str(functioncalls[5]).center(19)+'|'+ str(np.round(np.mean(calculatecoredensitytimes),13)).center(19)+'|')
-print('| '+'grid_integration'.ljust(30)+'|'+str(functioncalls[6]).center(19)+'|'+ str(np.round(np.mean(gridintegrationtimes),13)).center(19)+'|')
-print('| '+'energy_calculation'.ljust(30)+'|'+str(functioncalls[7]).center(19)+'|'+ str(np.round(np.mean(energycalculationtimes),13)).center(19)+'|')
-print('| '+'calculate_overlap'.ljust(30)+'|'+str(functioncalls[8]).center(19)+'|'+ str(np.round(np.mean(calculateoverlaptimes),13)).center(19)+'|')
-print('| '+'calculate_kinetic_derivative'.ljust(30)+'|'+str(functioncalls[9]).center(19)+'|'+ str(np.round(np.mean(calculatekineticderivativetimes),13)).center(19)+'|')
-print('| '+'calculate_hartree_reciprocal'.ljust(30)+'|'+str(functioncalls[10]).center(19)+'|'+ str(np.round(np.mean(calculatehartreereciprocaltimes),13)).center(19)+'|')
-print('| '+'calculate_hartree_real'.ljust(30)+'|'+str(functioncalls[11]).center(19)+'|'+ str(np.round(np.mean(calculatehartreerealtimes),13)).center(19)+'|')
-print('| '+'calculate_XC'.ljust(30)+'|'+str(functioncalls[12]).center(19)+'|'+ str(np.round(np.mean(calculateXCtimes),13)).center(19)+'|')
-print('| '+'calculate_V_SR_r'.ljust(30)+'|'+str(functioncalls[13]).center(19)+'|'+ str(np.round(np.mean(calculateVSRtimes),13)).center(19)+'|')
-print('| '+'calculate_self_energy'.ljust(30)+'|'+str(functioncalls[14]).center(19)+'|'+ str(np.round(np.mean(calculateselfenergytimes),13)).center(19)+'|')
-print('| '+'calculate_Ion_interation'.ljust(30)+'|'+str(functioncalls[15]).center(19)+'|'+ str(np.round(np.mean(calculateIItimes),13)).center(19)+'|')
-print('| '+'dftSetup'.ljust(30)+'|'+str(functioncalls[16]).center(19)+'|'+ str(np.round(np.mean(DFTsetuptimes),13)).center(19)+'|')
-print('| '+'computeE_0'.ljust(30)+'|'+str(functioncalls[17]).center(19)+'|'+ str(np.round(np.mean(computeE0times),13)).center(19)+'|')
-print('| '+'computeDFT'.ljust(30)+'|'+str(functioncalls[18]).center(19)+'|'+ str(np.round(np.mean(computeDFTtimes),13)).center(19)+'|')
-print('| '+'GaussianKick'.ljust(30)+'|'+str(functioncalls[19]).center(19)+'|'+ str(np.round(np.mean(GaussianKicktimes),13)).center(19)+'|')
-print('| '+'propagator'.ljust(30)+'|'+str(functioncalls[20]).center(19)+'|'+ str(np.round(np.mean(propagatortimes),13)).center(19)+'|')
-print('| '+'propagate'.ljust(30)+'|'+str(functioncalls[21]).center(19)+'|'+ str(np.round(np.mean(propagatetimes),13)).center(19)+'|')
-print('| '+'transition_dipole_tensor'.ljust(30)+'|'+str(functioncalls[22]).center(19)+'|'+ str(np.round(np.mean(tdttimes),13)).center(19)+'|')
-print('| '+'GetP'.ljust(30)+'|'+str(functioncalls[23]).center(19)+'|'+ str(np.round(np.mean(getptimes),13)).center(19)+'|')
-print('| '+'LagrangeExtrapolate'.ljust(30)+'|'+str(functioncalls[24]).center(19)+'|'+ str(np.round(np.mean(LagrangeExtrapolatetimes),13)).center(19)+'|')
-#print('| '+'pop_analysis'.ljust(30)+'|'+str(functioncalls[25]).center(19)+'|'+ str(np.round(np.mean(popanalysistimes),13)).center(19)+'|')
-print('| '+'ShannonEntropy'.ljust(30)+'|'+str(functioncalls[26]).center(19)+'|'+ str(np.round(np.mean(SEtimes),13)).center(19)+'|')
-print('| '+'vonNeumannEntropy'.ljust(30)+'|'+str(functioncalls[27]).center(19)+'|'+ str(np.round(np.mean(vNEtimes),13)).center(19)+'|')
-print('| '+'EntropyPInitBasis'.ljust(30)+'|'+str(functioncalls[28]).center(19)+'|'+ str(np.round(np.mean(PgsEtimes),13)).center(19)+'|')
-print('| '+'P_init_guess_calc'.ljust(30)+'|'+str(functioncalls[29]).center(19)+'|'+ str(np.round(np.mean(P_initguesstimes),13)).center(19)+'|')
-print('| '+'PP_coefs'.ljust(30)+'|'+str(functioncalls[30]).center(19)+'|'+ str(np.round(np.mean(PP_coefstimes),13)).center(19)+'|')
-print('| '+'rttddft'.ljust(30)+'|'+str(functioncalls[31]).center(19)+'|'+ str(np.round(np.mean(RTTDDFTtimes),13)).center(19)+'|')
-print(''.ljust(73,'-'))
+
 
 # %%
