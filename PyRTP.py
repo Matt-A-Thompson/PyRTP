@@ -16,7 +16,7 @@ import os # Mostly used to create files and directories
 from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
 import matplotlib.pyplot as plt # Used for post-processing of data
 import time # Used to check run times of certain functions
-from numba import jit,njit,objmode,typeof # Translates Python script into machine code for significantly faster runtimes
+from numba import njit,objmode # Translates Python script into machine code for significantly faster runtimes
 import re # Used to read and format .txt and .dat files (reading basis set libraries, etc.)
 from numba.typed import Dict
 from numba.core import types
@@ -816,6 +816,7 @@ def propagator(select,H1,H2,dt,functioncalls,timers): #propagator functions
     timers['propagatortimes']=np.append(timers['propagatortimes'],et-st)
     return U,functioncalls,timers
 
+# This function performs the propagation of P, without using a predictor corrector algorithm on KS or P
 def propagate_noKSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
     with objmode(st='f8'):
         st=time.time()
@@ -865,6 +866,7 @@ def propagate_noKSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z
     timers['propagatetimes']=np.append(timers['propagatetimes'],et-st)
     return P_new,KS_new,timers
 
+# This function performs the propagation of P, using a predictor corrector algorithm on KS
 def propagate_KSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
     match select:
         case 'CN':
@@ -960,6 +962,7 @@ def propagate_KSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R
     KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
     return P_new,KS_new,timers
 
+# This function performs the propagation of P, using a predictor corrector algorithm on P
 def propagate_noKSPC_PPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
     match select:
         case 'CN':
@@ -1053,6 +1056,7 @@ def propagate_noKSPC_PPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R
     KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
     return P_new,KS_new,timers
 
+# This function performs the propagation of P, using a predictor corrector algorithm on both KS and P
 def propagate_KSPC_PPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
     with objmode(st='f8'):
         st=time.time()
@@ -1382,11 +1386,72 @@ def TimingsTable(timers):
     print('| '+'rttddft'.ljust(30)+'|'+str(len(timers['RTTDDFTtimes'])).center(19)+'|'+ str(np.round(np.mean(timers['RTTDDFTtimes']),13)).center(19)+'|')
     print(''.ljust(73,'-'))
 
+# Energy plot
+def EnergyPlot(t,energies,title):
+    plt.plot(t,np.array(energies))
+    plt.xlabel('Time, $au_t$')
+    plt.ylabel('Energy, $Ha$')
+    plt.title(str(title))
+    plt.show()
+
+
+# Dipole moment plot
+def DipoleMomentPlot(t,mu,title):
+    plt.plot(t,np.array(mu))
+    plt.xlabel('Time, $s$')
+    plt.ylabel('Dipole moment, $\mu$')
+    plt.title(str(title))
+    plt.show()
+
+
+# Absorption Spectrum plot
+def AbsorptionSpectrum(mu,title):
+    filterpercentage=0
+    mu=np.array(mu)
+    c=299792458
+    h=6.62607015e-34
+    sp=scipy.fft.rfft(mu)
+    indexes=np.where(sp<np.percentile(sp,filterpercentage))[0]
+    sp[indexes]=0
+    freq = scipy.fft.rfftfreq(mu.size,(0.1*2.4188843265857e-17))
+    freqshift=scipy.fft.fftshift(freq)
+    ld=c/freq
+    en=h*freq
+    plt.plot(ld,np.abs(sp))
+    plt.xlabel('Wavelength, $m$')
+    plt.ylabel('Intensity')
+    plt.title(str(title))
+    plt.show()
+
+
+# Padded Absorption Spectrum plot
+def PaddedAbsorptionSpectrum(mu,title):
+    mu_padded=np.append(np.array(mu),np.ones(2000-nsteps)*(np.mean(mu)))
+    filterpercentage=0
+    c=299792458
+    h=6.62607015e-34
+    sp=scipy.fft.rfft(mu_padded)
+    indexes=np.where(sp<np.percentile(sp,filterpercentage))[0]
+    sp[indexes]=0
+    freq = scipy.fft.rfftfreq(mu_padded.size,(0.1*2.4188843265857e-17))
+    freqshift=scipy.fft.fftshift(freq)
+    ld=c/freq
+    en=h*freq
+    plt.plot(ld,np.abs(sp))
+    plt.xlabel('Wavelength, $m$')
+    plt.ylabel('Intensity')
+    plt.title(str(title))
+    plt.show()
+
 
 def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,**kwargs):
     TimingsTableSelect = kwargs.get('Timings', False)
     PPCselect=kwargs.get('PPC',False)
     KSPCselect=kwargs.get('KSPC',False)
+    EnergyPlotting=kwargs.get('EnergyPlotting',False)
+    MuPlotting=kwargs.get('MuPlotting',False)
+    AbsorptionSpectra=kwargs.get('AbsorptionSpectra',False)
+    PaddedAbsorptionSpectra=kwargs.get('PaddedAbsorptionSpectra',False)
 
     with objmode(st='f8'):
         st=time.time()
@@ -1478,7 +1543,6 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     vNE=[]
     EPinit=[]
     Kick=[]
-    KohnSham=np.zeros(nsteps*len(KS)**2).reshape(nsteps,len(KS),len(KS))
     # Writing a short .txt file giving the simulation parameters to the project folder.
     # This will fail if the directory already exists, as intended, to prevent data loss.
     os.mkdir(os.path.join(os.getcwd(),projectname))
@@ -1495,26 +1559,11 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
         print('--------------------------------------------------------------------\nPropagation timestep: '+str(i+1))
         #Applying perturbation
         KS,E_app,functioncalls,timers=GaussianKick(KS,kickstrength,kickdirection,t[i],r_x,r_y,r_z,phi,dr,P,functioncalls,timers)
-        #KohnSham[i]=KS
-        #print(KS)
+
         #Getting perturbed density matrix
         P,functioncalls,timers=GetP(KS,S,functioncalls,timers)
-        # Propagating depending on method.
-        # AETRS, CAETRS and CFM4 require 2 prior timesteps, which use ETRS
-        #if i<2 and propagator==('AETRS'):
-        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        #elif i<2 and propagator==('CAETRS'):
-        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        #elif i<2 and propagator==('CFM4'):
-        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,'ETRS',N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        #elif i>1 and propagator==('AETRS'):
-        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        #elif i>1 and propagator==('CAETRS'):
-        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        #elif i>1 and propagator==('CFM4'):
-        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,energies[i-1],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
-        #else:
-        #    P,proptime,functioncalls,timers=propagate(R_I,Z_I,P,H,C,dt,propagator,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,[],t,energies,t[i],i,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
+        # Propagating depending on whether Predictor Corrector algorithm is used on KS and/or P
+       
         if PPCselect==False and KSPCselect==False:
             P,KS,timers=propagate_noKSPC_noPPC(P,KS,KS_prev,propagator,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
         if PPCselect==False and KSPCselect==True:
@@ -1526,23 +1575,17 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
 
         print('\nPropagation time: '+str(timers['propagatetimes'][i]))
 
-        #KS,functioncalls,timers=GetKS(P,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
-        # Converging on accurate KS and P
-        
-        #P,H,C,KS,functioncalls,timers=computeDFT(R_I,L,N_i,P,Z_I,Cpp,SCFiterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,PW_He_G,PW_H_G,S,delta_T,E_self,E_II,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         H,functioncalls,timers=computeE_0(R_I,Z_I,P,N_i,Cpp,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,delta_T,E_self,E_II,L,phi,rPP,alpha_PP,V_NL,functioncalls,timers)
         # Information Collection
-        print("total energy : ", np.real(H), "\n")   # the convergence of the SCF cycle. These may be commented out
-        print("density matrix : ","\n", P, "\n")       # if required.
-        print("KS matrix : ","\n", KS, "\n")
+        
         mu_t=mu_const-np.trace(np.dot(D_tot,P))
         mu_x=np.trace(np.dot(D_x,P))
         mu_y=np.trace(np.dot(D_y,P))
         mu_z=np.trace(np.dot(D_z,P))
         energies.append(H)
         Kick.append(E_app)
-        SEnow,functioncalls,timers=ShannonEntropy(P,functioncalls,timers)
-        SE.append(SEnow)
+        #SEnow,functioncalls,timers=ShannonEntropy(P,functioncalls,timers)
+        #SE.append(SEnow)
         vNEnow,functioncalls,timers=vonNeumannEntropy(P,functioncalls,timers)
         vNE.append(vNEnow)
         PgsEnow,functioncalls,timers=EntropyPInitBasis(P,Pgs,functioncalls,timers)
@@ -1570,10 +1613,13 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
                 npaa.append(np.array(EPinit[i-9:i+1]))
 
         # Outputting calculated data
-      
-        print('Total dipole moment: '+str(mu_t))
+        print("total energy : ", np.real(H), "\n") 
+        print('total dipole moment: '+str(mu_t))  
+        print('von Neumann Entropy: '+str(vNE[i]))
+        print("density matrix : ","\n", P, "\n")       
+        print("KS matrix : ","\n", KS, "\n")
+        
         #print('Shannon entropy: '+str(SE[i]))
-        #print('von Neumann Entropy: '+str(vNE[i]))
         #print('P_init Basis Entropy: '+str(EPinit[i]))
         KS_prev=KS
 
@@ -1585,10 +1631,18 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     if len(kwargs)!=0:
         print('Optional outputs:\n')
     if TimingsTableSelect==True:
-        
         TimingsTable(timers)
+    if EnergyPlotting==True:
+        EnergyPlot(t,energies,'Energy plot')
+    if MuPlotting==True:
+        DipoleMomentPlot(t,mu,'Dipole Moment plot')
+    if AbsorptionSpectra==True:
+        AbsorptionSpectrum(mu,'Absorption Spectrum of mol: '+str(elements))
+    if PaddedAbsorptionSpectra==True:
+        PaddedAbsorptionSpectrum(mu,'Absorption Spectrum of mol: '+str(elements))
     
     return t,energies,mu,mux,muy,muz,propagationtimes,SE,vNE,EPinit,Kick,functioncalls,timers
+
 
 #%%
 # Simulation parameters
@@ -1605,69 +1659,11 @@ L=10.
 N_i=100
 
 # Molecule parameters
-R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])]) #R_I[0] for He, R_I[1] for H.
+R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])])
 elements = ['He','H']
 basis_filename='BASIS_MOLOPT'
 basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
 
-t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True,PPCselect=False,KSPCselect=False)
-
-
-#%%
-# Post-Processing section
-
-# Energy plot
-plt.plot(t,np.array(energies))
-plt.xlabel('Time, $s$')
-plt.ylabel('Energy, $Ha$')
-
-#%%
-# Dipole moment plot
-plt.plot(t,np.array(mu))
-plt.xlabel('Time, $s$')
-plt.ylabel('Dipole moment, $\mu$')
-#plt.xlim([0.8, 1.8])
-#plt.ylim([0.35352,0.35356])
-
-#%% Padded dipole moment plot
-mu_padded=np.append(np.array(mu),np.ones(2000-nsteps)*(np.mean(mu)))
-t_padded=np.arange(0,2000*timestep,timestep)*2.418e-17
-plt.plot(t_padded,mu_padded)
-#plt.xlim([0.6, 1.2])
-
-#%%
-# Absorption Spectrum plot
-filterpercentage=0
-mu=np.array(mu)
-c=299792458
-h=6.62607015e-34
-sp=scipy.fft.rfft(mu)
-indexes=np.where(sp<np.percentile(sp,filterpercentage))[0]
-sp[indexes]=0
-freq = scipy.fft.rfftfreq(mu.size,(0.1*2.4188843265857e-17))
-freqshift=scipy.fft.fftshift(freq)
-ld=c/freq
-en=h*freq
-plt.plot(ld,np.abs(sp))
-plt.xlabel('Wavelength, $\lambda$')
-plt.ylabel('Intensity')
-plt.xlim([-1e-9, 0.4e-7])
-
-#%%
-# Padded Absorption Spectrum plot
-filterpercentage=0
-c=299792458
-h=6.62607015e-34
-sp=scipy.fft.rfft(mu_padded)
-indexes=np.where(sp<np.percentile(sp,filterpercentage))[0]
-sp[indexes]=0
-freq = scipy.fft.rfftfreq(mu_padded.size,(0.1*2.4188843265857e-17))
-freqshift=scipy.fft.fftshift(freq)
-ld=c/freq
-en=h*freq
-plt.plot(ld[:100],np.abs(sp)[:100])
-plt.xlabel('Wavelength, $\lambda$')
-plt.ylabel('Intensity')
-#plt.xlim([0,])
+t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True,PPCselect=False,KSPCselect=False,EnergyPlotting=True,MuPlotting=True,AbsorptionSpectra=True,PaddedAbsorptionSpectra=True)
 
 # %%
