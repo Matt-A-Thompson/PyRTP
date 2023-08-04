@@ -6,13 +6,8 @@
 # to the physics underpinning the RT-TDDFT method.
 
 #Package imports
-import math # For general math operations
-import numpy as np # For fast math operations using BLAS (i.e. sums, means, etc.)
-import scipy # For general purpose maths, which sometimes works better than Numpy (FFTs specifically)
-from scipy.interpolate import lagrange # Specifically importing the lagrange function to save space later on in the program
-from sympy import Matrix # For general matrix manipulation (diagonalisation, etc). Numpy may work better for these operations, and may be a future change
-import pylibxc # Python interpretter for the LibXC exchange-correlation potentials library
-import os # Mostly used to create files and directories
+
+
 from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
 import matplotlib.pyplot as plt # Used for post-processing of data
 import time # Used to check run times of certain functions
@@ -22,14 +17,19 @@ from numba.typed import Dict
 from numba.core import types
 float_array = types.float64[:]
 
-# the number of threads can be specified by uncommenting one of the following functions,
-# run 'np.show_config()' to determine which to use.
+# (Advanced users only) The number of threads can be specified by running one of the following functions if required.
+# Numpy and Numba will automatically select a number of threads to use, but in the event that less than
+# the required number are used, the following can be used to force a number of threads. Run 'np.show_config()'
+# to determine which to use.
+
+
 #os.environ['OMP_NUM_THREADS']='8'
 #os.environ['OPENBLAS_NUM_THREADS']='8'
 #os.environ['MPI_NUM_THREADS']='8'
 #os.environ['MKL_NUM_THREADS']='8'
 
 #%%
+
 # FunctionCalls
 # This section includes all the functions required to perform DFT and RT-TDDFT. The @jit tags instruct Numba to convert
 # these functions into machine code, and are cached, so that repeated runs do not have to do this translation on every run.
@@ -172,11 +172,13 @@ def normalise_basis_set(phi,dr):
     
     return phi
 
+
 @njit(cache=True)
 def calculate_realspace_density(phi,N,N_i,P,dr,functioncalls,timers) :
     # This function determines the electron charge density at each grid point, along with a total electron charge density.
     with objmode(st='f8'):
         st=time.time()
+
     n_el_r = np.zeros(N).reshape(N_i,N_i,N_i)
     n_el_total = 0
 
@@ -224,13 +226,13 @@ def grid_integration(V_r,dr,phi,functioncalls,timers):
     with objmode(st='f8'):
         st=time.time()
     
+
     V = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
-    # Numba here
+    
     for i in range(0,len(phi)):
         for j in range(0,len(phi)):
 
             V[i][j] = np.sum(np.real(V_r)*phi[i]*phi[j])*dr
-
     with objmode(et='f8'):
         et=time.time()
     functioncalls[6]+=1
@@ -272,6 +274,7 @@ def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,
     # somewhat awkward to use.
     with objmode(st='f8'):
         st=time.time()
+
     delta_T = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
 
     for i in range(0,N_i) :
@@ -282,8 +285,8 @@ def calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,
 
                 for I in range(0,len(phi)) :
                     for J in range(0,len(phi)) :
-
-                        delta_T[I][J] += np.real(0.5*L**3/N**2*np.dot(g,g)*(np.conjugate(phi_PW_G[I][i][j][k])*phi_PW_G[J][i][j][k]))
+                        with objmode():
+                            delta_T[I][J] += 0.5*L**3/N**2*np.dot(g,g)*np.real(np.dot(np.conjugate(phi_PW_G[I][i][j][k]),phi_PW_G[J][i][j][k]))
 
     with objmode(et='f8'):
          et=time.time()
@@ -300,8 +303,8 @@ def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncal
         nG = np.fft.fftshift(n_G) #n_G is shifted to match same frequency domain as G (-pi,pi) instead of (0,2pi)
     Vg = np.zeros(N).reshape(N_i,N_i,N_i).astype(np.complex128)     # Arrays here are of type 'np.complex128', however we 
                                                                     # eventually ignore all non-real parts.
-
     E_hart_G = 0. ## Hartree energy in reciprocal space
+
     
     for i in range(0,N_i) :
         for j in range(0,N_i) :
@@ -316,6 +319,7 @@ def calculate_hartree_reciprocal(n_G,N,N_i,r_x,r_y,r_z,G_u,G_v,G_w,L,functioncal
                 E_hart_G += np.conjugate(nG[i][j][k])*Vg[i][j][k] 
                 
     E_hart_G *= L**3/N**2*0.5
+    
     with objmode(et='f8',Vout='complex128[:,:,:]'):
          Vout=np.fft.ifftshift(Vg) #result is shifted back. 
          et=time.time()
@@ -341,6 +345,7 @@ def calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,timers):
     # currently being used is 'LDA_XC_TETER93', which mimics the XC functional used in CP2K.
     with objmode(st='f8'):
         st=time.time()
+
     func=pylibxc.LibXCFunctional('LDA_XC_TETER93','unpolarized')
     inp={}
     inp["rho"]=n_el_r
@@ -350,6 +355,7 @@ def calculate_XC_pylibxc(n_el_r,N_i,dr,functioncalls,timers):
     V_XC_r = V_XC_r.reshape(N_i,N_i,N_i)
     E_XC_r = E_XC_r.reshape(N_i,N_i,N_i)
     E_XC=np.sum(E_XC_r*n_el_r)*dr
+
     with objmode(et='f8'):
          et=time.time()
     functioncalls[12]+=1
@@ -362,6 +368,7 @@ def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers
     # This function calculates the short range pseudopotential, again by looping over all grid points.
     with objmode(st='f8'):
         st=time.time()
+
     V_SR_r = np.zeros(N).reshape(N_i,N_i,N_i)
     
     for i in range(0,len(V_SR_r)) :
@@ -371,6 +378,7 @@ def calculate_V_SR_r(N,N_i,r_x,r_y,r_z,Z_I,Cpp,alpha_PP,R_I,functioncalls,timers
                 for n in range(0,len(Z_I)) : #loop over nuclei
                     r = np.linalg.norm(R_vec - R_I[n])
                     for c in range(0,len(Cpp)) : #loop over values of Cpp
+
                             V_SR_r[i][j][k] += Cpp[n][c]*(np.sqrt(2.)*alpha_PP[n]*r)**(2*(c+1)-2)*np.exp(-(alpha_PP[n]*r)**2) 
 
     with objmode(et='f8'):
@@ -491,7 +499,6 @@ def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
 
 @njit(cache=True)
 def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
-
     p = np.zeros(N,dtype=np.complex128).reshape(N_i,N_i,N_i)
     tot = 0. #used for normalisation
 
@@ -507,6 +514,7 @@ def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
 
 @njit(cache=True)
 def pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr) :
+
 
     V_nl = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
     
@@ -640,6 +648,7 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
                 
                 
 
+
     phi=normalise_basis_set(phi,dr)
     G_u = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
     G_v = np.linspace(-N_i*np.pi/L,N_i*np.pi/L,N_i,endpoint=False)
@@ -765,6 +774,7 @@ def computeDFT_first(R_I,L,N_i,Z_I,Cpp,iterations,r_x,r_y,r_z,N,dr,G_u,G_v,G_w,S
 
 # GaussianKick - provides energy to the system in the form of an electric pulse
 # with a Gaussian envelop (run each propagation step!)
+
 def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,P,functioncalls,timers):
     with objmode(st='f8'):
         st=time.time()
@@ -773,7 +783,6 @@ def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,P,functioncalls,timers)
     w=0.2 # were selected to be ideal for most systems.
              # In future, it is possible that the user could be given some
              # control over these parameters.
-
     Efield=np.dot(scale*np.exp((-(t-t0)**2)/(2*(w**2))),direction)
     D_x,D_y,D_z,D_tot,functioncalls,timers=transition_dipole_tensor_calculation(r_x,r_y,r_z,phi,dr,functioncalls,timers)
     V_app=-(np.dot(D_x,Efield[0])+np.dot(D_y,Efield[1])+np.dot(D_z,Efield[2]))
@@ -785,14 +794,15 @@ def GaussianKick(KS,scale,direction,t,r_x,r_y,r_z,phi,dr,P,functioncalls,timers)
     timers['GaussianKicktimes']=np.append(timers['GaussianKicktimes'],et-st)
     return KS_new,E_app,functioncalls,timers
 
+
 # Propagator - this function selects the equation to determine the unitary operator to propagate 
 # the system forward in time a singular timestep, using predictor-corrector regime (if applicable)
 # This function uses a match-case statement, hence the need for Python 3.10 or greater.
+
 @njit(cache=True)
 def propagator(select,H1,H2,dt,functioncalls,timers): #propagator functions
     with objmode(st='f8'):
         st=time.time()
-    
     match select:
         case 'CN':
             U=(1-(1j*(dt/2)*H1))/(1+(1j*(dt/2)*H1))
@@ -961,6 +971,7 @@ def propagate_KSPC_noPPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R
     P_new=np.dot(U,np.dot(P,np.conj(np.transpose(U))))
     KS_new,functioncalls,timers=GetKS(P_new,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers)
     return P_new,KS_new,timers
+
 
 # This function performs the propagation of P, using a predictor corrector algorithm on P
 def propagate_noKSPC_PPC(P,KS,KS_prev,select,dt,i,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,V_NL,functioncalls,timers):
@@ -1238,6 +1249,7 @@ def GetP(KS,S,functioncalls,timers):
     # This function determines the density matrix for a given Kohn-Sham matrix.
     with objmode(st='f8'):
         st=time.time()
+
     S=Matrix(S)
     U,s = S.diagonalize()
     s = s**(-0.5)
@@ -1272,7 +1284,7 @@ def GetKS(P,phi,N,N_i,dr,Z_I,r_x,r_y,r_z,R_I,G_u,G_v,G_w,L,delta_T,Cpp,alpha_PP,
     V_SR,functioncalls,timers = grid_integration(V_SR_r,dr,phi,functioncalls,timers)
     KS = np.array(delta_T)+np.array(V_hart)+np.array(V_SR)+np.array(V_XC)+np.array(V_NL)
     KS = np.real(KS) #change data type from complex to float, removing all ~0. complex values
-
+    
     return KS,functioncalls,timers
 
 def LagrangeExtrapolate(t,H,tnew,functioncalls,timers):
@@ -1302,6 +1314,7 @@ def pop_analysis(P,S,functioncalls,popanalysistimes) :
     pop_total = np.trace(PS)
     pop_He = PS[0,0]
     pop_H = PS[1,1]
+    
     with objmode(et='f8'):
          et=time.time()
     functioncalls[25]+=1
@@ -1466,7 +1479,9 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     '//        //      //     //     //     //       \n'+
     '-------------------------------------------------------\n')
     print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\nWarren Lynch - WLynch@lincoln.ac.uk\n'+
-    'Date of last edit: 18/07/2023\n'+
+
+    'Date of last edit: 04/08/2023\n'+
+          
     'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
     '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
     '\t     selected for benchmarking and testing.\n'+
@@ -1542,8 +1557,10 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     SE=[]
     vNE=[]
     EPinit=[]
+
     Kick=[]
     # Writing a short .txt file giving the simulation parameters to the project folder.
+
     # This will fail if the directory already exists, as intended, to prevent data loss.
     os.mkdir(os.path.join(os.getcwd(),projectname))
     lines = ['PyRTP run parameters','------------------------','Propagator: '+propagator,'Timesteps: '+str(nsteps),'Timestep: '+str(dt),'Kick strength: '+str(kickstrength),'Kick direction: '+str(kickdirection)]
@@ -1667,3 +1684,4 @@ basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
 t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True,PPCselect=False,KSPCselect=False,EnergyPlotting=True,MuPlotting=True,AbsorptionSpectra=True,PaddedAbsorptionSpectra=True)
 
 # %%
+
