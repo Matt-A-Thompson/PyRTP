@@ -1,0 +1,108 @@
+&GLOBAL
+  PROJECT HeH+test
+  RUN_TYPE  RT_PROPAGATION
+  PRINT_LEVEL MEDIUM
+&END GLOBAL
+&FORCE_EVAL
+  METHOD Quickstep
+  &DFT
+    CHARGE +1
+    LSD
+    BASIS_SET_FILE_NAME BASIS_MOLOPT
+    POTENTIAL_FILE_NAME POTENTIAL
+    &MGRID
+      CUTOFF 280
+      REL_CUTOFF 30
+      NGRIDS 1
+    &END MGRID
+    &QS
+      EPS_DEFAULT 1.0E-12
+      METHOD GPW
+      CORE_PPL GRID
+      #WF_INTERPOLATION PS
+      #EXTRAPOLATION_ORDER 3
+    &END QS
+    &SCF
+      SCF_GUESS ATOMIC
+      EPS_SCF 1.0E-6
+      MAX_SCF 100
+      &MIXING
+        NMIXING 50
+        ALPHA 0.4
+      &END MIXING
+    &END SCF
+    &XC
+      &XC_FUNCTIONAL PADE
+      &END XC_FUNCTIONAL
+    &END XC
+
+    &EFIELD
+      INTENSITY 0.001
+      POLARISATION 1.0 0.0 0.0
+      WAVELENGTH 210
+      ENVELOP GAUSSIAN
+      &GAUSSIAN_ENV
+        SIGMA 0.2
+        T0  1.0
+      &END
+    &END
+    &REAL_TIME_PROPAGATION
+       PERIODIC .FALSE.
+       COM_NL .FALSE.
+       MAX_ITER 50
+       MAT_EXP PADE
+       EXP_ACCURACY 1.0E-10
+       EPS_ITER 1.0E-9
+       PROPAGATOR EM
+       INITIAL_WFN SCF_WFN ! RT_RESTART
+    &END
+    &PRINT
+      &MOMENTS
+        PERIODIC .FALSE.
+        FILENAME dipole
+        COMMON_ITERATION_LEVELS 2
+      &END
+      &MO
+          EIGENVALUES
+          COEFFICIENTS
+       &END
+       &AO_MATRICES
+          KOHN_SHAM_MATRIX
+          OVERLAP
+          KINETIC_ENERGY
+          MATRIX_VXC
+          CORE_HAMILTONIAN
+          DENSITY
+       &END
+    &END
+  &END DFT
+  &SUBSYS
+    &CELL
+      ABC 10 10 10
+    &END CELL
+    &TOPOLOGY                   
+      &CENTER_COORDINATES
+      &END
+    &END
+    &COORD
+    He   0.000000    0.000000   0.000000  HeH
+    H   0.000000   0.000000    1.463200  HeH
+    &END COORD
+    &KIND H
+      BASIS_SET SZV-MOLOPT-GTH-q1
+      POTENTIAL GTH-LDA-q1
+    &END KIND
+    &KIND He
+      BASIS_SET SZV-MOLOPT-SR-GTH-q2
+      POTENTIAL GTH-LDA-q2
+    &END KIND
+  &END SUBSYS
+&END FORCE_EVAL
+&MOTION
+  &MD
+    STEPS 2000
+    TIMESTEP [au_t] 0.1
+  &END
+&END MOTION
+
+
