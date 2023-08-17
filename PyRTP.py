@@ -6,8 +6,13 @@
 # to the physics underpinning the RT-TDDFT method.
 
 #Package imports
-
-
+import math # For general math operations
+import numpy as np # For fast math operations using BLAS (i.e. sums, means, etc.)
+import scipy # For general purpose maths, which sometimes works better than Numpy (FFTs specifically)
+from scipy.interpolate import lagrange # Specifically importing the lagrange function to save space later on in the program
+from sympy import Matrix # For general matrix manipulation (diagonalisation, etc). Numpy may work better for these operations, and may be a future change
+import pylibxc # Python interpretter for the LibXC exchange-correlation potentials library
+import os # Mostly used to create files and directories
 from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
 import matplotlib.pyplot as plt # Used for post-processing of data
 import time # Used to check run times of certain functions
