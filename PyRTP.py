@@ -1364,7 +1364,6 @@ def EntropyPInitBasis(P,Pini,functioncalls,timers):
     return EPinitBasis,functioncalls,timers
 
 def TimingsTable(timers):
-
     print(''.ljust(73,'-'))
     print('|'+'Timings Table'.center(71)+'|')
     print(''.ljust(73,'-'))
