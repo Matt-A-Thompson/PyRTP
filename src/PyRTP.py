@@ -113,7 +113,7 @@ def CP2K_basis_set_data(filename,element,basis_set,numorbitals,functioncalls,tim
     # This function reads the selected basis set file within the CP2K data folder. In future, depending on licensing, we may be able to include a copy of the 'BASIS_MOLOPT' file, 
     # or read all of the data in the file and convert it into a .npy file.
     st=time.time()
-    data_path = './src/BasisSets' # This folder contains the basis set .txt files
+    data_path = './basissets' # This folder contains the basis set .txt files
     check = 0
     get_key = 0
     key = np.array([])
@@ -436,9 +436,9 @@ def P_init_guess_calc(T,S,N,N_i,Z_I,r_x,r_y,r_z,R_I,basis_filename,functioncalls
     
     filenamelist=[basis_filename,Z_Istring,R_Istring]
     filename="".join(filenamelist)
-    if os.path.isfile("src/InitialGuesses/"+filename+".npy"):
-        print("Reading P_init from src/InitialGuesses...\n")
-        P_init = np.load("src/InitialGuesses/"+filename+".npy")
+    if os.path.isfile("./initialguesses/"+filename+".npy"):
+        print("Reading P_init from ./initialguesses...\n")
+        P_init = np.load("./initialguesses/"+filename+".npy")
     else:
         print("Using HF to approximate P_init...\n")
         n_c_r,functioncalls,timers = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,timers)
@@ -454,7 +454,7 @@ def P_init_guess_calc(T,S,N,N_i,Z_I,r_x,r_y,r_z,R_I,basis_filename,functioncalls
                 for p in range(0,len(P_init)-1) :
                     P_init[u][v] += C[u][p]*C[v][p]
                 P_init[u][v] *=2
-        np.save("src/InitialGuesses/"+filename,P_init)
+        np.save("./initialguesses/"+filename,P_init)
 
     with objmode(et='f8'):
         et=time.time()
@@ -465,8 +465,8 @@ def P_init_guess_calc(T,S,N,N_i,Z_I,r_x,r_y,r_z,R_I,basis_filename,functioncalls
 def PP_coefs(Z_I,functioncalls,timers):
     with objmode(st='f8'):
         st=time.time()
-    cPP_lib=np.load('src/Pseudopotentials/Local/cPP.npy')
-    rPP_lib=np.load('src/Pseudopotentials/Local/rPP.npy')
+    cPP_lib=np.load('./pseudopotentials/local/cPP.npy')
+    rPP_lib=np.load('./pseudopotentials/local/rPP.npy')
     cPP=[]
     rPP=[]
     for i in range(0,len(Z_I)):
@@ -522,14 +522,14 @@ def pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr) :
 
 
     V_nl = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
+
+    for u in range(0,len(phi)):
+        for v in range(0,len(phi)):
     
-    for u in range(0,len(phi)) :
-        for v in range(0,len(phi)) :
-    
-            for l in range(0,1) : #only s orbital pseudopotential in the calculation of H2O ?
-                for i in range(1,2) : #only non-zero coefficient h is when i=j=1                                                                                                                                                                             
-                    for j in range(1,2) :
-                        for m in range(-l,l+1) :                                                                                                                                                                                                                
+            for l in range(0,len(r_l)): #only s orbital pseudopotential in the calculation of H2O ?
+                for i in range(0,len(h_l[l])): #only non-zero coefficient h is when i=j=1                                                                                                                                                                             
+                    for j in range(0,len(h_l[l])):
+                        for m in range(-l,l+1):                                                                                                                                                                                                                
 
                             Y = spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z)                                                                                                                                                                                                      
 
@@ -537,7 +537,7 @@ def pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr) :
                             p_J = projector(j,l,m,N,N_i,r_x,r_y,r_z,r_l,dr)
                             
                             #THIS IS NOT REALLY MATRIX MULTIPLICATION, JUST IN ARRAYS TO SPEED UP CODE (i.e. STILL POINT BY POINT MULTIPLICATION)                                                                                                                            
-                            V_nl[u][v] += np.real(np.sum(np.conjugate(phi[u])*p_I*Y)*h_l[l]*np.sum(phi[v]*p_J*np.conjugate(Y))*dr*dr)
+                            V_nl[u][v] += np.real(np.sum(np.conjugate(phi[u])*p_I*Y)*h_l[l][i][j]*np.sum(phi[v]*p_J*np.conjugate(Y))*dr*dr)
                  
     return V_nl
 
@@ -666,7 +666,7 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     delta_T,functioncalls,timers = calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,timers)
     cPP,rPP,alpha_PP,functioncalls,timers=PP_coefs(Z_I,functioncalls,timers)
     r_l = np.array([0.221786,0.256829])
-    h_l = np.array([18.266917,0.])
+    h_l = np.array([[[18.266917,0.],[0.,0.]],[[0.,0.],[0.,0.]]])
     if np.any(Z_I>=4.0)==True:
         V_NL = pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr)
     else:
@@ -1665,6 +1665,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     return t,energies,mu,mux,muy,muz,propagationtimes,SE,vNE,EPinit,Kick,functioncalls,timers
 
 
+
 #%%
 # Simulation parameters
 nsteps=100
@@ -1680,10 +1681,10 @@ L=10.
 N_i=100
 
 # Molecule parameters
-R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])])
-elements = ['He','H']
+R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632]),np.array([0.0,1.4632,0.0])])
+elements = ['H','O','H']
 basis_filename='BASIS_MOLOPT'
-basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
+basis_sets=['SZV-MOLOPT-GTH','SZV-MOLOPT-GTH','SZV-MOLOPT-GTH']
 
 t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True,PPCselect=False,KSPCselect=False,EnergyPlotting=True,MuPlotting=True,AbsorptionSpectra=True,PaddedAbsorptionSpectra=True)
 
