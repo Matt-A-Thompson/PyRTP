@@ -11,7 +11,7 @@ import numpy as np # For fast math operations using BLAS (i.e. sums, means, etc.
 import scipy # For general purpose maths, which sometimes works better than Numpy (FFTs specifically)
 from scipy.interpolate import lagrange # Specifically importing the lagrange function to save space later on in the program
 from sympy import Matrix # For general matrix manipulation (diagonalisation, etc). Numpy may work better for these operations, and may be a future change
-import pylibxc # Python interpretter for the LibXC exchange-correlation potentials library
+import pylibxc # Python interpreter for the LibXC exchange-correlation potentials library
 import os # Mostly used to create files and directories
 from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
 import matplotlib.pyplot as plt # Used for post-processing of data
@@ -21,6 +21,7 @@ import re # Used to read and format .txt and .dat files (reading basis set libra
 from numba.typed import Dict
 from numba.core import types
 float_array = types.float64[:]
+import shutil # Used to delete and move files  
 
 # (Advanced users only) The number of threads can be specified by running one of the following functions if required.
 # Numpy and Numba will automatically select a number of threads to use, but in the event that less than
@@ -504,15 +505,19 @@ def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
 
 @njit(cache=True)
 def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
-    p = np.zeros(N,dtype=np.complex128).reshape(N_i,N_i,N_i)
+    p = np.zeros(N,dtype=np.float128).reshape(N_i,N_i,N_i)
     tot = 0. #used for normalisation
 
     for i in range(0,N_i) :
         for j in range(0,N_i) :
             for k in range(0,N_i) :
                 r = np.sqrt(r_x[i]**2+r_y[j]**2+r_z[k]**2)
+                if r < 0.01 : continue  
                 p[i][j][k] = r**(l+2*I-2)*np.exp(-0.5*(r/r_l[l])**2)
+                print(p[i][j][k])
                 tot += p[i][j][k]*p[i][j][k]*r**2*dr
+                print(tot)
+    
     p = p/np.sqrt(tot) #normalisation
     
     return p
@@ -1664,7 +1669,11 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     
     return t,energies,mu,mux,muy,muz,propagationtimes,SE,vNE,EPinit,Kick,functioncalls,timers
 
+def rtptutorial():
+    loc='./notebooks/RT-TDDFT.ipynb'
+    shutil.copy(loc,os.getcwd())
 
+    return
 
 #%%
 # Simulation parameters
