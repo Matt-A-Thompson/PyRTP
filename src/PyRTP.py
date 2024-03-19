@@ -470,16 +470,23 @@ def PP_coefs(Z_I,functioncalls,timers):
     rPP_lib=np.load('./pseudopotentials/local/rPP.npy')
     cPP=[]
     rPP=[]
+    rl_lib=np.load('./pseudopotentials/nonlocal/r_l.npy')
+    hl_lib=np.load('./pseudopotentials/nonlocal/h_l.npy')
+    r_l=[]
+    h_l=[]
     for i in range(0,len(Z_I)):
         cPP.append(cPP_lib[int(Z_I[i])-1])
         rPP.append(rPP_lib[int(Z_I[i]-1)])
+        if int(Z_I[i])>=4.0:
+            r_l.append(rl_lib[int(Z_I[i])-1][0])
+            h_l.append(hl_lib[int(Z_I[i])-1][0])
 
     alpha_PP=1/(np.sqrt(2)*np.array(rPP))
     with objmode(et='f8'):
         et=time.time()
     functioncalls[30]+=1
     timers['PP_coefstimes']=np.append(timers['PP_coefstimes'],et-st)
-    return np.array(cPP).astype(np.float64),np.array(rPP).astype(np.float64),alpha_PP.astype(np.float64),functioncalls,timers
+    return np.array(cPP).astype(np.float64),np.array(rPP).astype(np.float64),np.array(r_l).astype(np.float64),np.array(h_l).astype(np.float64),alpha_PP.astype(np.float64),functioncalls,timers
 
 @njit(cache=True)
 def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
@@ -505,18 +512,16 @@ def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
 
 @njit(cache=True)
 def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
-    p = np.zeros(N,dtype=np.float128).reshape(N_i,N_i,N_i)
+    p = np.zeros(N,dtype=np.complex128).reshape(N_i,N_i,N_i)
     tot = 0. #used for normalisation
 
     for i in range(0,N_i) :
         for j in range(0,N_i) :
             for k in range(0,N_i) :
                 r = np.sqrt(r_x[i]**2+r_y[j]**2+r_z[k]**2)
-                if r < 0.01 : continue  
-                p[i][j][k] = r**(l+2*I-2)*np.exp(-0.5*(r/r_l[l])**2)
-                print(p[i][j][k])
+                if r < 0.01 : continue
+                p[i][j][k] = r**(l+2*I-2)*np.exp(-0.5*(r/r_l)**2)
                 tot += p[i][j][k]*p[i][j][k]*r**2*dr
-                print(tot)
     
     p = p/np.sqrt(tot) #normalisation
     
@@ -524,22 +529,21 @@ def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
 
 @njit(cache=True)
 def pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr) :
-
-
-    V_nl = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
+    V_nl = np.zeros(len(phi)**2,dtype=np.complex128).reshape(len(phi),len(phi))
 
     for u in range(0,len(phi)):
         for v in range(0,len(phi)):
     
             for l in range(0,len(r_l)): #only s orbital pseudopotential in the calculation of H2O ?
+                if np.all(h_l[l] == 0) : continue
                 for i in range(0,len(h_l[l])): #only non-zero coefficient h is when i=j=1                                                                                                                                                                             
                     for j in range(0,len(h_l[l])):
                         for m in range(-l,l+1):                                                                                                                                                                                                                
 
                             Y = spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z)                                                                                                                                                                                                      
 
-                            p_I = projector(i,l,m,N,N_i,r_x,r_y,r_z,r_l,dr)
-                            p_J = projector(j,l,m,N,N_i,r_x,r_y,r_z,r_l,dr)
+                            p_I = projector(i,l,m,N,N_i,r_x,r_y,r_z,r_l[l],dr)
+                            p_J = projector(j,l,m,N,N_i,r_x,r_y,r_z,r_l[l],dr)
                             
                             #THIS IS NOT REALLY MATRIX MULTIPLICATION, JUST IN ARRAYS TO SPEED UP CODE (i.e. STILL POINT BY POINT MULTIPLICATION)                                                                                                                            
                             V_nl[u][v] += np.real(np.sum(np.conjugate(phi[u])*p_I*Y)*h_l[l][i][j]*np.sum(phi[v]*p_J*np.conjugate(Y))*dr*dr)
@@ -669,9 +673,11 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     phi_PW_G = np.array(phi_PW_G) #store in array 
     S, functioncalls,timers = calculate_overlap(N,N_i,dr,phi,functioncalls,timers)
     delta_T,functioncalls,timers = calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,timers)
-    cPP,rPP,alpha_PP,functioncalls,timers=PP_coefs(Z_I,functioncalls,timers)
-    r_l = np.array([0.221786,0.256829])
-    h_l = np.array([[[18.266917,0.],[0.,0.]],[[0.,0.],[0.,0.]]])
+    cPP,rPP,r_l,h_l,alpha_PP,functioncalls,timers=PP_coefs(Z_I,functioncalls,timers)
+    print(cPP)
+    print(rPP)
+    print(r_l)
+    print(h_l)
     if np.any(Z_I>=4.0)==True:
         V_NL = pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr)
     else:
@@ -1489,7 +1495,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     '-------------------------------------------------------\n')
     print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\nWarren Lynch - WLynch@lincoln.ac.uk\n'+
 
-    'Date of last edit: 04/08/2023\n'+
+    'Date of last edit: 15/03/2024\n'+
           
     'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
     '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
@@ -1690,10 +1696,10 @@ L=10.
 N_i=100
 
 # Molecule parameters
-R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632]),np.array([0.0,1.4632,0.0])])
-elements = ['H','O','H']
+R_I = np.array([np.array([0.,0.,0.]), np.array([0.,0.,1.4632])])
+elements = ['He','H']
 basis_filename='BASIS_MOLOPT'
-basis_sets=['SZV-MOLOPT-GTH','SZV-MOLOPT-GTH','SZV-MOLOPT-GTH']
+basis_sets=['SZV-MOLOPT-SR-GTH','SZV-MOLOPT-GTH']
 
 t,energies,mu,mux,muy,muz,timings,SE,vNE,EPinit,Kick,functioncalls,timers=rttddft(nsteps,timestep,proptype,SCFiterations,L,N_i,R_I,elements,basis_sets,basis_filename,kickstrength,kickdirection,projectname,Timings=True,PPCselect=False,KSPCselect=False,EnergyPlotting=True,MuPlotting=True,AbsorptionSpectra=True,PaddedAbsorptionSpectra=True)
 
