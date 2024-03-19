@@ -11,7 +11,7 @@ import numpy as np # For fast math operations using BLAS (i.e. sums, means, etc.
 import scipy # For general purpose maths, which sometimes works better than Numpy (FFTs specifically)
 from scipy.interpolate import lagrange # Specifically importing the lagrange function to save space later on in the program
 from sympy import Matrix # For general matrix manipulation (diagonalisation, etc). Numpy may work better for these operations, and may be a future change
-import pylibxc # Python interpretter for the LibXC exchange-correlation potentials library
+import pylibxc # Python interpreter for the LibXC exchange-correlation potentials library
 import os # Mostly used to create files and directories
 from npy_append_array import NpyAppendArray #used to save data as external arrays regularly in case of failure to run
 import matplotlib.pyplot as plt # Used for post-processing of data
@@ -21,6 +21,7 @@ import re # Used to read and format .txt and .dat files (reading basis set libra
 from numba.typed import Dict
 from numba.core import types
 float_array = types.float64[:]
+import shutil # Used to delete and move files  
 
 # (Advanced users only) The number of threads can be specified by running one of the following functions if required.
 # Numpy and Numba will automatically select a number of threads to use, but in the event that less than
@@ -113,7 +114,7 @@ def CP2K_basis_set_data(filename,element,basis_set,numorbitals,functioncalls,tim
     # This function reads the selected basis set file within the CP2K data folder. In future, depending on licensing, we may be able to include a copy of the 'BASIS_MOLOPT' file, 
     # or read all of the data in the file and convert it into a .npy file.
     st=time.time()
-    data_path = './src/BasisSets' # This folder contains the basis set .txt files
+    data_path = './basissets' # This folder contains the basis set .txt files
     check = 0
     get_key = 0
     key = np.array([])
@@ -436,9 +437,9 @@ def P_init_guess_calc(T,S,N,N_i,Z_I,r_x,r_y,r_z,R_I,basis_filename,functioncalls
     
     filenamelist=[basis_filename,Z_Istring,R_Istring]
     filename="".join(filenamelist)
-    if os.path.isfile("src/InitialGuesses/"+filename+".npy"):
-        print("Reading P_init from src/InitialGuesses...\n")
-        P_init = np.load("src/InitialGuesses/"+filename+".npy")
+    if os.path.isfile("./initialguesses/"+filename+".npy"):
+        print("Reading P_init from ./initialguesses...\n")
+        P_init = np.load("./initialguesses/"+filename+".npy")
     else:
         print("Using HF to approximate P_init...\n")
         n_c_r,functioncalls,timers = calculate_core_density(N,N_i,Z_I,r_x,r_y,r_z,R_I,functioncalls,timers)
@@ -454,7 +455,7 @@ def P_init_guess_calc(T,S,N,N_i,Z_I,r_x,r_y,r_z,R_I,basis_filename,functioncalls
                 for p in range(0,len(P_init)-1) :
                     P_init[u][v] += C[u][p]*C[v][p]
                 P_init[u][v] *=2
-        np.save("src/InitialGuesses/"+filename,P_init)
+        np.save("./initialguesses/"+filename,P_init)
 
     with objmode(et='f8'):
         et=time.time()
@@ -465,20 +466,27 @@ def P_init_guess_calc(T,S,N,N_i,Z_I,r_x,r_y,r_z,R_I,basis_filename,functioncalls
 def PP_coefs(Z_I,functioncalls,timers):
     with objmode(st='f8'):
         st=time.time()
-    cPP_lib=np.load('src/Pseudopotentials/Local/cPP.npy')
-    rPP_lib=np.load('src/Pseudopotentials/Local/rPP.npy')
+    cPP_lib=np.load('./pseudopotentials/local/cPP.npy')
+    rPP_lib=np.load('./pseudopotentials/local/rPP.npy')
     cPP=[]
     rPP=[]
+    rl_lib=np.load('./pseudopotentials/nonlocal/r_l.npy')
+    hl_lib=np.load('./pseudopotentials/nonlocal/h_l.npy')
+    r_l=[]
+    h_l=[]
     for i in range(0,len(Z_I)):
         cPP.append(cPP_lib[int(Z_I[i])-1])
         rPP.append(rPP_lib[int(Z_I[i]-1)])
+        if int(Z_I[i])>=4.0:
+            r_l.append(rl_lib[int(Z_I[i])-1][0])
+            h_l.append(hl_lib[int(Z_I[i])-1][0])
 
     alpha_PP=1/(np.sqrt(2)*np.array(rPP))
     with objmode(et='f8'):
         et=time.time()
     functioncalls[30]+=1
     timers['PP_coefstimes']=np.append(timers['PP_coefstimes'],et-st)
-    return np.array(cPP).astype(np.float64),np.array(rPP).astype(np.float64),alpha_PP.astype(np.float64),functioncalls,timers
+    return np.array(cPP).astype(np.float64),np.array(rPP).astype(np.float64),np.array(r_l).astype(np.float64),np.array(h_l).astype(np.float64),alpha_PP.astype(np.float64),functioncalls,timers
 
 @njit(cache=True)
 def spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z) :
@@ -511,33 +519,34 @@ def projector(I,l,m,N,N_i,r_x,r_y,r_z,r_l,dr):
         for j in range(0,N_i) :
             for k in range(0,N_i) :
                 r = np.sqrt(r_x[i]**2+r_y[j]**2+r_z[k]**2)
-                p[i][j][k] = r**(l+2*I-2)*np.exp(-0.5*(r/r_l[l])**2)
+                if r < 0.01 : continue
+                p[i][j][k] = r**(l+2*I-2)*np.exp(-0.5*(r/r_l)**2)
                 tot += p[i][j][k]*p[i][j][k]*r**2*dr
+    
     p = p/np.sqrt(tot) #normalisation
     
     return p
 
 @njit(cache=True)
 def pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr) :
+    V_nl = np.zeros(len(phi)**2,dtype=np.complex128).reshape(len(phi),len(phi))
 
-
-    V_nl = np.zeros(len(phi)**2).reshape(len(phi),len(phi))
+    for u in range(0,len(phi)):
+        for v in range(0,len(phi)):
     
-    for u in range(0,len(phi)) :
-        for v in range(0,len(phi)) :
-    
-            for l in range(0,1) : #only s orbital pseudopotential in the calculation of H2O ?
-                for i in range(1,2) : #only non-zero coefficient h is when i=j=1                                                                                                                                                                             
-                    for j in range(1,2) :
-                        for m in range(-l,l+1) :                                                                                                                                                                                                                
+            for l in range(0,len(r_l)): #only s orbital pseudopotential in the calculation of H2O ?
+                if np.all(h_l[l] == 0) : continue
+                for i in range(0,len(h_l[l])): #only non-zero coefficient h is when i=j=1                                                                                                                                                                             
+                    for j in range(0,len(h_l[l])):
+                        for m in range(-l,l+1):                                                                                                                                                                                                                
 
                             Y = spherical_harmonic(l,m,N,N_i,r_x,r_y,r_z)                                                                                                                                                                                                      
 
-                            p_I = projector(i,l,m,N,N_i,r_x,r_y,r_z,r_l,dr)
-                            p_J = projector(j,l,m,N,N_i,r_x,r_y,r_z,r_l,dr)
+                            p_I = projector(i,l,m,N,N_i,r_x,r_y,r_z,r_l[l],dr)
+                            p_J = projector(j,l,m,N,N_i,r_x,r_y,r_z,r_l[l],dr)
                             
                             #THIS IS NOT REALLY MATRIX MULTIPLICATION, JUST IN ARRAYS TO SPEED UP CODE (i.e. STILL POINT BY POINT MULTIPLICATION)                                                                                                                            
-                            V_nl[u][v] += np.real(np.sum(np.conjugate(phi[u])*p_I*Y)*h_l[l]*np.sum(phi[v]*p_J*np.conjugate(Y))*dr*dr)
+                            V_nl[u][v] += np.real(np.sum(np.conjugate(phi[u])*p_I*Y)*h_l[l][i][j]*np.sum(phi[v]*p_J*np.conjugate(Y))*dr*dr)
                  
     return V_nl
 
@@ -664,9 +673,11 @@ def dftSetup(R_I,L,N_i,elements,basis_sets,basis_filename,functioncalls,timers):
     phi_PW_G = np.array(phi_PW_G) #store in array 
     S, functioncalls,timers = calculate_overlap(N,N_i,dr,phi,functioncalls,timers)
     delta_T,functioncalls,timers = calculate_kinetic_derivative(phi,phi_PW_G,N,N_i,G_u,G_v,G_w,L,functioncalls,timers)
-    cPP,rPP,alpha_PP,functioncalls,timers=PP_coefs(Z_I,functioncalls,timers)
-    r_l = np.array([0.221786,0.256829])
-    h_l = np.array([18.266917,0.])
+    cPP,rPP,r_l,h_l,alpha_PP,functioncalls,timers=PP_coefs(Z_I,functioncalls,timers)
+    print(cPP)
+    print(rPP)
+    print(r_l)
+    print(h_l)
     if np.any(Z_I>=4.0)==True:
         V_NL = pseudo_nl(phi,N,N_i,r_x,r_y,r_z,r_l,h_l,dr)
     else:
@@ -1484,7 +1495,7 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     '-------------------------------------------------------\n')
     print('Contributing authors:\nMatthew Thompson - MatThompson@lincoln.ac.uk\nMatt Watkins - MWatkins@lincoln.ac.uk\nWarren Lynch - WLynch@lincoln.ac.uk\n'+
 
-    'Date of last edit: 04/08/2023\n'+
+    'Date of last edit: 15/03/2024\n'+
           
     'Description: A program to perform RT-TDDFT exclusively in Python.\n'+ 
     '\t     A variety of propagators (CN, EM, ETRS, etc.) can be \n'+
@@ -1664,6 +1675,11 @@ def rttddft(nsteps,dt,propagator,SCFiterations,L,N_i,R_I,elements,basis_sets,bas
     
     return t,energies,mu,mux,muy,muz,propagationtimes,SE,vNE,EPinit,Kick,functioncalls,timers
 
+def rtptutorial():
+    loc='./notebooks/RT-TDDFT.ipynb'
+    shutil.copy(loc,os.getcwd())
+
+    return
 
 #%%
 # Simulation parameters
