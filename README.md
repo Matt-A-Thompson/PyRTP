@@ -15,7 +15,7 @@ Matthew Thompson - MatThompson@lincoln.ac.uk
 Matt Watkins - MWatkins@lincoln.ac.uk   
 Warren Lynch - WLynch@lincoln.ac.uk     
 <br />
-Date of last edit: 04/08/2023  
+Date of last edit: 19/03/2024  
 Description: A program to perform RT-TDDFT exclusively in Python.
              A variety of propagators (CN, EM, ETRS, etc.) can be
              selected for benchmarking and testing.
